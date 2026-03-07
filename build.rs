@@ -1,16 +1,76 @@
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
+
+struct PkgConfig {
+    libs: Vec<String>,
+}
+
+impl PkgConfig {
+    pub fn new() -> Self {
+        Self { libs: Vec::new() }
+    }
+
+    pub fn add_lib(mut self, lib: impl Into<String>) -> Self {
+        self.libs.push(lib.into());
+        self
+    }
+
+    fn pkg_config_wrapper(&self, arg: &str, callback: fn(String) -> String) -> Vec<String> {
+        self.libs
+            .iter()
+            .map(|lib| {
+                Command::new("pkg-config")
+                    .args([arg, lib])
+                    .output()
+                    .expect("unable to execute pkg-config")
+            })
+            .flat_map(|output| {
+                String::from_utf8(output.stdout)
+                    .expect("unable to parse output from pkg-config")
+                    .split([' ', '\n'])
+                    .map(String::from)
+                    .collect::<Vec<String>>()
+            })
+            .filter(|s| !s.is_empty())
+            .map(callback)
+            .collect()
+    }
+
+    pub fn libs(&self) -> Vec<String> {
+        self.pkg_config_wrapper("--libs", |flag| {
+            if let Some(c_lib) = flag.strip_prefix("-l") {
+                format!("rustc-link-lib={c_lib}")
+            } else {
+                unimplemented!("only implemented -l flags, not '{flag}'")
+            }
+        })
+    }
+
+    pub fn cflags(&self) -> Vec<String> {
+        self.pkg_config_wrapper("--cflags", |flag| {
+            if let Some(lib_path) = flag.strip_prefix("-I") {
+                format!("rustc-link-search={lib_path}")
+            } else {
+                unimplemented!("only implemented -I flags, not '{flag}'")
+            }
+        })
+    }
+}
 
 fn main() {
     // Tell cargo to look for shared libraries in the specified directory
     //println!("cargo:rustc-link-search=/path/to/lib");
 
-    // Tell cargo to tell rustc to link the system wayland-server
-    // shared library.
-    println!("cargo:rustc-link-lib=wayland-server");
+    let pkg_config = PkgConfig::new().add_lib("wayland-server");
 
-    // link against math.h and blocklist the file later.
-    println!("cargo:rustc-link-lib=m");
+    for cflag in pkg_config.cflags() {
+        println!("cargo:{cflag}");
+    }
+
+    for lib_opt in pkg_config.libs() {
+        println!("cargo:{lib_opt}");
+    }
 
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
