@@ -1,6 +1,6 @@
 use std::{sync::Arc, thread};
 
-use comp::wl::WlDisplay;
+use wlz::wl::WlDisplay;
 use signal_hook::{consts::SIGINT, iterator::Signals};
 
 fn run() -> Option<()> {
