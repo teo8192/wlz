@@ -17,21 +17,18 @@ impl PkgConfig {
     }
 
     fn pkg_config_wrapper(&self, arg: &str, callback: fn(String) -> String) -> Vec<String> {
-        self.libs
-            .iter()
-            .map(|lib| {
-                Command::new("pkg-config")
-                    .args([arg, lib])
-                    .output()
-                    .expect("unable to execute pkg-config")
-            })
-            .flat_map(|output| {
-                String::from_utf8(output.stdout)
-                    .expect("unable to parse output from pkg-config")
-                    .split([' ', '\n'])
-                    .map(String::from)
-                    .collect::<Vec<String>>()
-            })
+        let mut args = vec![arg];
+        args.extend(self.libs.iter().map(String::as_str));
+
+        let output = Command::new("pkg-config")
+            .args(&args)
+            .output()
+            .expect("unable to execute pkg-config");
+
+        String::from_utf8(output.stdout)
+            .expect("unable to parse output from pkg-config")
+            .split([' ', '\n'])
+            .map(String::from)
             .filter(|s| !s.is_empty())
             .map(callback)
             .collect()
@@ -62,7 +59,10 @@ fn main() {
     // Tell cargo to look for shared libraries in the specified directory
     //println!("cargo:rustc-link-search=/path/to/lib");
 
-    let pkg_config = PkgConfig::new().add_lib("wayland-server");
+    let pkg_config = PkgConfig::new()
+        .add_lib("wayland-server")
+        .add_lib("wlroots-0.19")
+        .add_lib("xkbcommon");
 
     for cflag in pkg_config.cflags() {
         println!("cargo:{cflag}");
