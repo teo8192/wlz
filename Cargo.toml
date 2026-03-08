@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+memoffset = "0.9"
 signal-hook = "0.4.3"
 wlz-macros = { path = "wlz-macros" }
 

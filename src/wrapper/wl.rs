@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::ffi::CStr;
+use std::mem;
 use std::ptr::NonNull;
 
 use wlz_macros::{cdrop, PtrWrapper};
@@ -45,8 +46,29 @@ impl Display {
     }
 
     pub fn get_event_loop(&mut self) -> EventLoop {
-        EventLoop(
-            NonNull::new(unsafe { ffi::wl_display_get_event_loop(self.as_ptr()) }).unwrap(),
-        )
+        EventLoop(NonNull::new(unsafe { ffi::wl_display_get_event_loop(self.as_ptr()) }).unwrap())
     }
 }
+
+pub struct Listener(pub ffi::wl_listener);
+
+impl Listener {
+    /// Safety: the pointer must be valid for mutable access
+    pub unsafe fn from_ptr<'a>(ptr: NonNull<ffi::wl_listener>) -> &'a mut Listener {
+        let ptr = ptr.as_ptr() as *mut Listener;
+        unsafe { &mut *ptr }
+    }
+}
+
+pub struct List(ffi::wl_list);
+
+impl List {
+    pub fn new() -> Self {
+        let mut list = unsafe { mem::zeroed() };
+        unsafe { ffi::wl_list_init(&mut list as *mut ffi::wl_list) };
+
+        Self(list)
+    }
+}
+
+pub struct Signal(ffi::wl_signal);

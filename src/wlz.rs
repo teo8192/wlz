@@ -1,8 +1,11 @@
+use std::ffi::c_void;
 use std::{error::Error, fmt};
 
-use crate::wrapper::wl::Display;
+use wlz_macros::WlListeners;
+
+use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
-    Allocator, Backend, Compositor, DataDeviceManager, OutputLayout, Renderer, SubCompositor,
+    Allocator, Backend, BackendEvent, Compositor, DataDeviceManager, OutputLayout, Renderer, SubCompositor
 };
 use crate::wrapper::WrapperError;
 
@@ -25,7 +28,11 @@ impl From<WrapperError> for WlzError {
     }
 }
 
+#[derive(WlListeners)]
 pub struct WlzServer {
+    outputs: List,
+    #[listener("new_output")]
+    new_output: Listener,
     // field order is important, they are dropped in the order they are declared
     output_layout: OutputLayout,
     allocator: Allocator,
@@ -59,13 +66,25 @@ impl WlzServer {
          * arrangement of screens in a physical layout. */
         let output_layout = OutputLayout::create(&mut display)?;
 
+        /* Configure a listener to be notified when new outputs are available on the
+         * backend. */
+        let outputs = List::new();
+
+        let new_output = Self::init_new_output(backend.get_event_mut(BackendEvent::NewOutput));
+
         Ok(Self {
+            outputs,
+            new_output,
             output_layout,
             display,
             backend,
             renderer,
             allocator,
         })
+    }
+
+    pub fn new_output(&mut self, listener: &Listener, data: *mut c_void) {
+        todo!()
     }
 
     pub fn display(&self) -> &Display {
