@@ -53,16 +53,24 @@ impl Display {
 pub struct Listener(pub ffi::wl_listener);
 
 impl Listener {
-    /// Safety: the pointer must be valid for mutable access
+    /// # Safety
+    /// the pointer must be valid for mutable access
     pub unsafe fn from_ptr<'a>(ptr: NonNull<ffi::wl_listener>) -> &'a mut Listener {
         let ptr = ptr.as_ptr() as *mut Listener;
         unsafe { &mut *ptr }
     }
 }
 
+impl Drop for Listener {
+    fn drop(&mut self) {
+        unsafe { ffi::wl_list_remove(&mut self.0.link as *mut ffi::wl_list) };
+    }
+}
+
 pub struct List(ffi::wl_list);
 
 impl List {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let mut list = unsafe { mem::zeroed() };
         unsafe { ffi::wl_list_init(&mut list as *mut ffi::wl_list) };
