@@ -25,10 +25,11 @@ impl From<WrapperError> for WlzError {
 }
 
 pub struct WlzServer {
-    wl_display: WlDisplay,
-    wlr_backend: Backend,
-    wlr_renderer: Renderer,
+    // field order is important, they are dropped in the order they are declared
     wlr_allocator: Allocator,
+    wlr_renderer: Renderer,
+    wlr_backend: Backend,
+    wl_display: WlDisplay,
 }
 
 impl WlzServer {
