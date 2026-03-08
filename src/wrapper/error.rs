@@ -10,6 +10,7 @@ pub enum WrapperError {
     FailedToCreateCompositor,
     FailedToCreateSubCompositor,
     FailedToCreateDataDeviceManager,
+    FailedToCreateOutputLayout,
     FailedToAddSocket,
     FailedToInitializeDisplay,
 }
