@@ -7,6 +7,7 @@ pub enum WrapperError {
     FailedToCreateRenderer,
     FailedToCreateBackend,
     FailedToCreateAllocator,
+    FailedToCreateCompositor,
     FailedToAddSocket,
     FailedToInitializeDisplay,
 }

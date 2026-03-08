@@ -1,7 +1,7 @@
-use std::{error::Error, fmt::Display};
+use std::{error::Error, fmt};
 
 use crate::ffi;
-use crate::wrapper::wl::WlDisplay;
+use crate::wrapper::wl::Display;
 use crate::wrapper::wlr::{Allocator, Backend, Renderer};
 use crate::wrapper::WrapperError;
 
@@ -10,7 +10,7 @@ pub enum WlzError {
     WErr(WrapperError),
 }
 
-impl Display for WlzError {
+impl fmt::Display for WlzError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
@@ -29,22 +29,24 @@ pub struct WlzServer {
     wlr_allocator: Allocator,
     wlr_renderer: Renderer,
     wlr_backend: Backend,
-    wl_display: WlDisplay,
+    wl_display: Display,
 }
 
 impl WlzServer {
     pub fn try_create() -> Result<Self, Box<dyn Error>> {
-        let mut wl_display = WlDisplay::try_create()?;
-        let wlr_backend = Backend::autocreate(wl_display.get_event_loop())?;
-        let mut wlr_renderer = Renderer::autocreate(&wlr_backend)?;
+        let mut wl_display = Display::try_create()?;
+        let mut wlr_backend = Backend::autocreate(wl_display.get_event_loop())?;
+        let mut wlr_renderer = Renderer::autocreate(&mut wlr_backend)?;
 
         wlr_renderer.init_wl_display(&mut wl_display)?;
 
-        let wlr_allocator = Allocator::autocreate(&wlr_backend, &wlr_renderer)?;
+        let wlr_allocator = Allocator::autocreate(&mut wlr_backend, &mut wlr_renderer)?;
+
+
 
         unsafe {
-            ffi::wlr_compositor_create(wl_display.as_mut_ptr(), 5, wlr_renderer.as_mut_ptr());
-            ffi::wlr_subcompositor_create(wl_display.as_mut_ptr());
+            ffi::wlr_compositor_create(wl_display.as_ptr(), 5, wlr_renderer.as_ptr());
+            ffi::wlr_subcompositor_create(wl_display.as_ptr());
         }
 
         Ok(Self {
@@ -55,7 +57,7 @@ impl WlzServer {
         })
     }
 
-    pub fn display(&self) -> &WlDisplay {
+    pub fn display(&self) -> &Display {
         &self.wl_display
     }
 }
