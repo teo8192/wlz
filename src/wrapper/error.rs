@@ -8,6 +8,8 @@ pub enum WrapperError {
     FailedToCreateBackend,
     FailedToCreateAllocator,
     FailedToCreateCompositor,
+    FailedToCreateSubCompositor,
+    FailedToCreateDataDeviceManager,
     FailedToAddSocket,
     FailedToInitializeDisplay,
 }

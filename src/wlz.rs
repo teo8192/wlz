@@ -1,8 +1,9 @@
 use std::{error::Error, fmt};
 
-use crate::ffi;
 use crate::wrapper::wl::Display;
-use crate::wrapper::wlr::{Allocator, Backend, Renderer};
+use crate::wrapper::wlr::{
+    Allocator, Backend, Compositor, DataDeviceManager, Renderer, SubCompositor,
+};
 use crate::wrapper::WrapperError;
 
 #[derive(Debug)]
@@ -42,12 +43,16 @@ impl WlzServer {
 
         let wlr_allocator = Allocator::autocreate(&mut wlr_backend, &mut wlr_renderer)?;
 
-
-
-        unsafe {
-            ffi::wlr_compositor_create(wl_display.as_ptr(), 5, wlr_renderer.as_ptr());
-            ffi::wlr_subcompositor_create(wl_display.as_ptr());
-        }
+        /* This creates some hands-off wlroots interfaces. The compositor is
+         * necessary for clients to allocate surfaces, the subcompositor allows to
+         * assign the role of subsurfaces to surfaces and the data device manager
+         * handles the clipboard. Each of these wlroots interfaces has room for you
+         * to dig your fingers in and play with their behavior if you want. Note that
+         * the clients cannot set the selection directly without compositor approval,
+         * see the handling of the request_set_selection event below.*/
+        Compositor::create(&mut wl_display, 5, &mut wlr_renderer)?;
+        SubCompositor::create(&mut wl_display)?;
+        DataDeviceManager::create(&mut wl_display)?;
 
         Ok(Self {
             wl_display,

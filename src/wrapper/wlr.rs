@@ -74,12 +74,45 @@ pub struct Compositor(NonNull<ffi::wlr_compositor>);
 impl Compositor {
     pub fn create(
         wl_display: &mut Display,
+        version: u32,
         wlr_renderer: &mut Renderer,
     ) -> Result<Self, WrapperError> {
         NonNull::new(unsafe {
-            ffi::wlr_compositor_create(wl_display.as_ptr(), 5, wlr_renderer.as_ptr())
+            ffi::wlr_compositor_create(wl_display.as_ptr(), version, wlr_renderer.as_ptr())
         })
-        .map(|ptr| Self(ptr))
+        .map(Self)
         .ok_or(WrapperError::FailedToCreateCompositor)
     }
 }
+
+#[derive(PtrWrapper)]
+pub struct SubCompositor(NonNull<ffi::wlr_subcompositor>);
+
+impl SubCompositor {
+    pub fn create(
+        wl_display: &mut Display,
+    ) -> Result<Self, WrapperError> {
+        NonNull::new(unsafe {
+            ffi::wlr_subcompositor_create(wl_display.as_ptr())
+        })
+        .map(Self)
+        .ok_or(WrapperError::FailedToCreateSubCompositor)
+    }
+}
+
+#[derive(PtrWrapper)]
+pub struct DataDeviceManager(NonNull<ffi::wlr_data_device_manager>);
+
+impl DataDeviceManager {
+    pub fn create(
+        wl_display: &mut Display,
+    ) -> Result<Self, WrapperError> {
+        NonNull::new(unsafe {
+            ffi::wlr_data_device_manager_create(wl_display.as_ptr())
+        })
+        .map(Self)
+        .ok_or(WrapperError::FailedToCreateDataDeviceManager)
+    }
+}
+
+
