@@ -1,18 +1,20 @@
-use std::{sync::Arc, thread};
+use std::error::Error;
 
-use wlz::wl::WlDisplay;
-use signal_hook::{consts::SIGINT, iterator::Signals};
+//use signal_hook::{consts::SIGINT, iterator::Signals};
+use wlz::wlz::WlzServer;
 
-fn run() -> Option<()> {
-    let disp = Arc::new(WlDisplay::try_create()?);
-    let socket = disp.add_socket_auto()?;
+/*
+fn run() -> Result<(), Box<dyn Error>> {
+    /*
+    let display = Arc::new(server.display());
+    let socket = display.add_socket_auto().ok_or("Failed to create socket")?;
 
     println!("Running compositor on socket: {socket}");
     println!("Starting compositor, C-c to exit");
 
-    let term_disp = Arc::clone(&disp);
+    let term_disp = Arc::clone(display);
 
-    let mut signals = Signals::new([SIGINT]).ok()?;
+    let mut signals = Signals::new([SIGINT])?;
 
     let term_thread = thread::spawn(move || {
         // Should probably loop through this?
@@ -26,10 +28,13 @@ fn run() -> Option<()> {
     term_thread.join().ok()?;
 
     Some(())
+    */
+    Ok(())
 }
+*/
 
-fn main() {
-    if run().is_none() {
-        eprintln!("Failed during execution of wayland compositor!");
-    }
+fn main() -> Result<(), Box<dyn Error>> {
+    #[allow(unused)]
+    let server = WlzServer::try_create()?;
+    Ok(())
 }

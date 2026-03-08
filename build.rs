@@ -16,8 +16,12 @@ impl PkgConfig {
         self
     }
 
-    fn pkg_config_wrapper(&self, arg: &str, callback: fn(String) -> String) -> Vec<String> {
-        let mut args = vec![arg];
+    fn pkg_config_wrapper<'a>(
+        &self,
+        arg: impl Into<Vec<&'a str>>,
+        callback: fn(String) -> String,
+    ) -> Vec<String> {
+        let mut args = arg.into();
         args.extend(self.libs.iter().map(String::as_str));
 
         let output = Command::new("pkg-config")
@@ -35,7 +39,7 @@ impl PkgConfig {
     }
 
     pub fn libs(&self) -> Vec<String> {
-        self.pkg_config_wrapper("--libs", |flag| {
+        self.pkg_config_wrapper(["--libs"], |flag| {
             if let Some(c_lib) = flag.strip_prefix("-l") {
                 format!("rustc-link-lib={c_lib}")
             } else {
@@ -45,13 +49,17 @@ impl PkgConfig {
     }
 
     pub fn cflags(&self) -> Vec<String> {
-        self.pkg_config_wrapper("--cflags", |flag| {
+        self.pkg_config_wrapper(["--cflags"], |flag| {
             if let Some(lib_path) = flag.strip_prefix("-I") {
                 format!("rustc-link-search={lib_path}")
             } else {
                 unimplemented!("only implemented -I flags, not '{flag}'")
             }
         })
+    }
+
+    pub fn args(&self) -> Vec<String> {
+        self.pkg_config_wrapper(["--cflags", "--libs"], |x| x)
     }
 }
 
@@ -72,6 +80,9 @@ fn main() {
         println!("cargo:{lib_opt}");
     }
 
+    let mut clang_args = pkg_config.args();
+    clang_args.push(String::from("-DWLR_USE_UNSTABLE"));
+
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
@@ -79,6 +90,7 @@ fn main() {
         // The input header we would like to generate
         // bindings for.
         .header("wrapper.h")
+        .clang_args(clang_args)
         .blocklist_file(".*/math.h")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.

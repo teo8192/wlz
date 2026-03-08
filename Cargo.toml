@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 signal-hook = "0.4.3"
+wlz-macros = { path = "wlz-macros" }
 
 [build-dependencies]
 bindgen = "0.72.1"
