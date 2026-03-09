@@ -1,9 +1,10 @@
 use std::error::Error;
 use std::ffi::CStr;
+use std::marker::PhantomPinned;
 use std::mem;
-use std::ptr::NonNull;
+use std::ptr::{null_mut, NonNull};
 
-use wlz_macros::{cdrop, PtrWrapper};
+use wlz_macros::{c_drop, c_ptr, FromPtr, PtrWrapper};
 
 use crate::ffi;
 use crate::wrapper::WrapperError;
@@ -12,11 +13,8 @@ use crate::wrapper::WrapperError;
 pub struct EventLoop(NonNull<ffi::wl_event_loop>);
 
 #[derive(PtrWrapper)]
-#[cdrop(ffi::wl_display_destroy)]
+#[c_drop(ffi::wl_display_destroy)]
 pub struct Display(NonNull<ffi::wl_display>);
-
-unsafe impl Send for Display {}
-unsafe impl Sync for Display {}
 
 impl Display {
     pub fn try_create() -> Result<Self, WrapperError> {
@@ -50,24 +48,46 @@ impl Display {
     }
 }
 
-pub struct Listener(pub ffi::wl_listener);
-
-impl Listener {
-    /// # Safety
-    /// the pointer must be valid for mutable access
-    pub unsafe fn from_ptr<'a>(ptr: NonNull<ffi::wl_listener>) -> &'a mut Listener {
-        let ptr = ptr.as_ptr() as *mut Listener;
-        unsafe { &mut *ptr }
-    }
+/// Reimplementation of `ffi::wl_listener`
+#[c_ptr(ffi::wl_listener)]
+#[repr(C)]
+pub struct Listener {
+    link: List,
+    notify: ffi::wl_notify_func_t,
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        unsafe { ffi::wl_list_remove(&mut self.0.link as *mut ffi::wl_list) };
+        unsafe { ffi::wl_list_remove(self.link.as_ptr()) };
     }
 }
 
-pub struct List(ffi::wl_list);
+type ListenerCallback =
+    unsafe extern "C" fn(listener: *mut ffi::wl_listener, data: *mut ::std::os::raw::c_void);
+
+impl Listener {
+    pub fn new(notify: ListenerCallback) -> Self {
+        Self {
+            link: List::empty(),
+            notify: Some(notify),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            link: List::empty(),
+            notify: None,
+        }
+    }
+}
+
+#[c_ptr(ffi::wl_list)]
+#[repr(C)]
+/// Wrapper around `ffi::wl_list`
+pub struct List {
+    list: ffi::wl_list,
+    _pin: PhantomPinned,
+}
 
 impl List {
     #[allow(clippy::new_without_default)]
@@ -75,8 +95,26 @@ impl List {
         let mut list = unsafe { mem::zeroed() };
         unsafe { ffi::wl_list_init(&mut list as *mut ffi::wl_list) };
 
-        Self(list)
+        Self {
+            list,
+            _pin: PhantomPinned,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            list: ffi::wl_list {
+                prev: null_mut(),
+                next: null_mut(),
+            },
+            _pin: PhantomPinned,
+        }
+    }
+
+    pub fn insert(&mut self, other: &mut Self) {
+        unsafe { ffi::wl_list_insert(self.as_ptr(), other.as_ptr()) };
     }
 }
 
+#[derive(FromPtr)]
 pub struct Signal(ffi::wl_signal);

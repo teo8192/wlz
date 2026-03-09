@@ -1,6 +1,7 @@
+use std::mem::zeroed;
 use std::ptr::{null_mut, NonNull};
 
-use wlz_macros::{cdrop, PtrWrapper};
+use wlz_macros::{c_drop, FromPtr, PtrWrapper};
 
 use super::wl::EventLoop;
 use super::WrapperError;
@@ -8,7 +9,7 @@ use crate::ffi;
 use crate::wrapper::wl::{Display, Signal};
 
 #[derive(PtrWrapper)]
-#[cdrop(ffi::wlr_backend_destroy)]
+#[c_drop(ffi::wlr_backend_destroy)]
 pub struct Backend(NonNull<ffi::wlr_backend>);
 
 pub enum BackendEvent {
@@ -29,22 +30,24 @@ impl Backend {
     }
 
     pub fn get_event(&self, event: BackendEvent) -> &Signal {
+        use BackendEvent::*;
         let backend = unsafe { self.0.as_ref() };
         let event_ptr = match event {
-            BackendEvent::Destroy => &backend.events.destroy,
-            BackendEvent::NewInput => &backend.events.new_input,
-            BackendEvent::NewOutput => &backend.events.new_output,
+            Destroy => &backend.events.destroy,
+            NewInput => &backend.events.new_input,
+            NewOutput => &backend.events.new_output,
         } as *const ffi::wl_signal;
         let signal_ptr = event_ptr as *const Signal;
         unsafe { &(*signal_ptr) as &Signal }
     }
 
     pub fn get_event_mut(&mut self, event: BackendEvent) -> &mut Signal {
+        use BackendEvent::*;
         let backend = unsafe { self.0.as_mut() };
         let event_ptr = match event {
-            BackendEvent::Destroy => &mut backend.events.destroy,
-            BackendEvent::NewInput => &mut backend.events.new_input,
-            BackendEvent::NewOutput => &mut backend.events.new_output,
+            Destroy => &mut backend.events.destroy,
+            NewInput => &mut backend.events.new_input,
+            NewOutput => &mut backend.events.new_output,
         } as *mut ffi::wl_signal;
         let signal_ptr = event_ptr as *mut Signal;
         unsafe { &mut (*signal_ptr) as &mut Signal }
@@ -52,7 +55,7 @@ impl Backend {
 }
 
 #[derive(PtrWrapper)]
-#[cdrop(ffi::wlr_renderer_destroy)]
+#[c_drop(ffi::wlr_renderer_destroy)]
 pub struct Renderer(NonNull<ffi::wlr_renderer>);
 
 impl Renderer {
@@ -76,7 +79,7 @@ impl Renderer {
 }
 
 #[derive(PtrWrapper)]
-#[cdrop(ffi::wlr_allocator_destroy)]
+#[c_drop(ffi::wlr_allocator_destroy)]
 pub struct Allocator(NonNull<ffi::wlr_allocator>);
 
 impl Allocator {
@@ -143,5 +146,126 @@ impl OutputLayout {
         NonNull::new(unsafe { ffi::wlr_output_layout_create(wl_display.as_ptr()) })
             .map(Self)
             .ok_or(WrapperError::FailedToCreateOutputLayout)
+    }
+
+    pub fn add_auto(&mut self, output: &mut Output) -> Result<OutputLayoutOutput, WrapperError> {
+        NonNull::new(unsafe { ffi::wlr_output_layout_add_auto(self.as_ptr(), output.as_ptr()) })
+            .map(OutputLayoutOutput)
+            .ok_or(WrapperError::FailedOutputLayoutAddAuto)
+    }
+}
+
+#[derive(PtrWrapper)]
+pub struct OutputLayoutOutput(NonNull<ffi::wlr_output_layout_output>);
+
+pub enum OutputEvent {
+    Frame,
+    RequestState,
+    Destroy,
+}
+
+#[derive(FromPtr)]
+pub struct Output(ffi::wlr_output);
+
+impl Output {
+    pub fn init_renderer(&mut self, allocator: &mut Allocator, renderer: &mut Renderer) {
+        // TODO: handle error
+        unsafe {
+            ffi::wlr_output_init_render(self.as_ptr(), allocator.as_ptr(), renderer.as_ptr())
+        };
+    }
+
+    pub fn preferred_mode(&mut self) -> Option<&mut OutputMode> {
+        let mode = unsafe { ffi::wlr_output_preferred_mode(self.as_ptr()) };
+
+        NonNull::new(mode).map(|m| unsafe { OutputMode::from_ptr(m) })
+    }
+
+    pub fn commit_state(&mut self, state: &mut OutputState) {
+        // TODO: handle error
+        unsafe { ffi::wlr_output_commit_state(self.as_ptr(), state.as_ptr()) };
+    }
+
+    pub fn get_event(&self, ty: OutputEvent) -> &Signal {
+        use OutputEvent::*;
+        let event_ptr = match ty {
+            Frame => &self.0.events.frame,
+            RequestState => &self.0.events.request_state,
+            Destroy => &self.0.events.destroy,
+        } as *const ffi::wl_signal;
+        let signal_ptr = event_ptr as *const Signal;
+        unsafe { &(*signal_ptr) as &Signal }
+    }
+
+    pub fn get_event_mut(&mut self, ty: OutputEvent) -> &mut Signal {
+        use OutputEvent::*;
+        let event_ptr = match ty {
+            Frame => &mut self.0.events.frame,
+            RequestState => &mut self.0.events.request_state,
+            Destroy => &mut self.0.events.destroy,
+        } as *mut ffi::wl_signal;
+        let signal_ptr = event_ptr as *mut Signal;
+        unsafe { &mut (*signal_ptr) as &mut Signal }
+    }
+}
+
+#[derive(FromPtr)]
+pub struct OutputState(ffi::wlr_output_state);
+
+impl OutputState {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        let mut output_state = Self(unsafe { zeroed() });
+        unsafe { ffi::wlr_output_state_init(output_state.as_ptr()) };
+
+        output_state
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        unsafe { ffi::wlr_output_state_set_enabled(self.as_ptr(), enabled) };
+    }
+
+    pub fn set_mode(&mut self, output_mode: &mut OutputMode) {
+        unsafe { ffi::wlr_output_state_set_mode(self.as_ptr(), output_mode.as_ptr()) };
+    }
+
+    pub fn finish(&mut self) {
+        unsafe { ffi::wlr_output_state_finish(self.as_ptr()) };
+    }
+}
+
+#[derive(FromPtr)]
+pub struct OutputMode(ffi::wlr_output_mode);
+
+#[derive(PtrWrapper)]
+pub struct SceneOutputLayout(NonNull<ffi::wlr_scene_output_layout>);
+
+impl SceneOutputLayout {
+    pub fn add_output(
+        &mut self,
+        layout_output: &mut OutputLayoutOutput,
+        scene_output: &mut SceneOutput,
+    ) {
+        unsafe {
+            ffi::wlr_scene_output_layout_add_output(
+                self.as_ptr(),
+                layout_output.as_ptr(),
+                scene_output.as_ptr(),
+            )
+        };
+    }
+}
+
+#[derive(PtrWrapper)]
+pub struct SceneOutput(NonNull<ffi::wlr_scene_output>);
+
+#[derive(PtrWrapper)]
+pub struct Scene(NonNull<ffi::wlr_scene>);
+
+impl Scene {
+    pub fn output_create(&mut self, output: &mut Output) -> Result<SceneOutput, WrapperError> {
+        NonNull::new(unsafe { ffi::wlr_scene_output_create(self.as_ptr(), output.as_ptr()) })
+            .map(SceneOutput)
+            .ok_or(WrapperError::FailedToCreateSceneOutput)
     }
 }
