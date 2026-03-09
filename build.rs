@@ -83,6 +83,21 @@ fn main() {
     let mut clang_args = pkg_config.args();
     clang_args.push(String::from("-DWLR_USE_UNSTABLE"));
 
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let xml = "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml";
+    let header = out_path.join("xdg-shell-protocol.h");
+    let search_path = format!("-I{}", out_path.to_str().unwrap());
+    println!("cargo:rustc-link-search={}", out_path.display());
+
+    if !header.exists() {
+        Command::new("wayland-scanner")
+            .args(["server-header", xml, header.to_str().unwrap()])
+            .status()
+            .expect("failed to run wayland-scanner");
+    }
+
+    clang_args.push(search_path);
+
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
@@ -90,6 +105,7 @@ fn main() {
         // The input header we would like to generate
         // bindings for.
         .header("src/wrapper.h")
+        .generate_comments(true)
         .clang_args(clang_args)
         .blocklist_file(".*/math.h")
         // Tell cargo to invalidate the built crate whenever any of the
@@ -100,8 +116,31 @@ fn main() {
         // Unwrap the Result and panic on failure.
         .expect("Unable to generate bindings");
 
+    println!("cargo:rustc-link-lib=dylib=X11");
+    println!("cargo:rustc-link-lib=dylib=X11-xcb");
+    println!("cargo:rustc-link-lib=dylib=xkbcommon");
+    println!("cargo:rustc-link-lib=dylib=xcb");
+    println!("cargo:rustc-link-lib=dylib=xcb-composite");
+    println!("cargo:rustc-link-lib=dylib=xcb-xfixes");
+    println!("cargo:rustc-link-lib=dylib=xcb-image");
+    println!("cargo:rustc-link-lib=dylib=xcb-render");
+    println!("cargo:rustc-link-lib=dylib=xcb-shm");
+    println!("cargo:rustc-link-lib=dylib=xcb-icccm");
+    println!("cargo:rustc-link-lib=dylib=xcb-xkb");
+    println!("cargo:rustc-link-lib=dylib=xcb-xinput");
+    println!("cargo:rustc-link-lib=dylib=wayland-egl");
+    println!("cargo:rustc-link-lib=dylib=wayland-client");
+    println!("cargo:rustc-link-lib=dylib=wayland-server");
+    println!("cargo:rustc-link-lib=dylib=EGL");
+    println!("cargo:rustc-link-lib=dylib=GL");
+    println!("cargo:rustc-link-lib=dylib=gbm");
+    println!("cargo:rustc-link-lib=dylib=drm");
+    println!("cargo:rustc-link-lib=dylib=input");
+    println!("cargo:rustc-link-lib=dylib=udev");
+    println!("cargo:rustc-link-lib=dylib=dbus-1");
+    println!("cargo:rustc-link-lib=dylib=pixman-1");
+
     // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");

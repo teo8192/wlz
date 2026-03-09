@@ -16,7 +16,6 @@ pub enum WrapperError {
     FailedToCreateScene,
     FailedToAddSocket,
     FailedToInitializeDisplay,
-    FailedSceneAttachOutputLayout,
     GeneralError(String),
 }
 

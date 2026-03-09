@@ -207,19 +207,8 @@ pub fn derive_wl_listeners(input: TokenStream) -> TokenStream {
             );
 
             inits.push(quote! {
-                fn #init_name(signal: &mut crate::wrapper::wl::Signal) -> crate::wrapper::wl::Listener {
-                    let mut listener = crate::wrapper::wl::Listener::new(Self::#trampoline_name);
-
-                    let sig_ptr = signal as *mut crate::wrapper::wl::Signal;
-
-                    unsafe {
-                        crate::ffi::wl_signal_add(
-                            sig_ptr as *mut crate::ffi::wl_signal,
-                            listener.as_ptr()
-                        );
-                    }
-
-                    listener
+                fn #init_name(&mut self) {
+                    self.#field_name = crate::wrapper::wl::Listener::new(Self::#trampoline_name);
                 }
             });
 

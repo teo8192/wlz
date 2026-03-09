@@ -8,7 +8,8 @@ use wlz_macros::WlListeners;
 use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
     Allocator, Backend, BackendEvent, Compositor, DataDeviceManager, Output, OutputEvent,
-    OutputLayout, OutputState, Renderer, Scene, SceneOutputLayout, SubCompositor,
+    OutputLayout, OutputState, Renderer, Scene, SceneOutputLayout, SubCompositor, XdgShell,
+    XdgShellEvent,
 };
 use crate::wrapper::WrapperError;
 use crate::{error, ffi};
@@ -42,6 +43,14 @@ pub struct WlzServer {
 
     scene_layout: SceneOutputLayout,
     scene: Scene,
+
+    toplevels: List,
+    xdg_shell: XdgShell,
+    #[listener("new_xdg_toplevel")]
+    new_xdg_toplevel: Listener,
+
+    #[listener("new_xdg_popup")]
+    new_xdg_popup: Listener,
 
     allocator: Allocator,
     renderer: Renderer,
@@ -79,10 +88,12 @@ impl WlzServer {
 
         /* Configure a listener to be notified when new outputs are available on the
          * backend. */
-        this.outputs = List::new();
+        this.outputs.init();
 
-        this.new_output =
-            Self::init_new_output(this.backend.get_event_mut(BackendEvent::NewOutput));
+        this.init_new_output();
+        this.backend
+            .get_event_mut(BackendEvent::NewOutput)
+            .add(&mut this.new_output);
 
         /* Create a scene graph. This is a wlroots abstraction that handles all
          * rendering and damage tracking. All the compositor author needs to do
@@ -92,6 +103,21 @@ impl WlzServer {
          */
         this.scene = Scene::create()?;
         this.scene_layout = this.scene.attach_output_layout(&mut this.output_layout)?;
+
+        /* Set up xdg-shell version 3. The xdg-shell is a Wayland protocol which is
+         * used for application windows. For more detail on shells, refer to
+         * https://drewdevault.com/2018/07/29/Wayland-shells.html.
+         */
+        this.toplevels.init();
+        this.xdg_shell = XdgShell::create(&mut this.display, 3)?;
+        this.init_new_xdg_toplevel();
+        this.xdg_shell
+            .get_event_mut(XdgShellEvent::NewToplevel)
+            .add(&mut this.new_xdg_toplevel);
+        this.init_new_xdg_popup();
+        this.xdg_shell
+            .get_event_mut(XdgShellEvent::NewPopup)
+            .add(&mut this.new_xdg_popup);
 
         Ok(())
     }
@@ -126,14 +152,22 @@ impl WlzServer {
         let output = unsafe { pinned.as_mut().get_unchecked_mut() };
 
         /* Sets up a listener for the frame event. */
-        output.frame = WlzOutput::init_frame(wlr_output.get_event_mut(OutputEvent::Frame));
+        output.init_frame();
+        wlr_output
+            .get_event_mut(OutputEvent::Frame)
+            .add(&mut output.frame);
 
         /* Sets up a listener for the state request event. */
-        output.request_state =
-            WlzOutput::init_request_state(wlr_output.get_event_mut(OutputEvent::RequestState));
+        output.init_request_state();
+        wlr_output
+            .get_event_mut(OutputEvent::RequestState)
+            .add(&mut output.request_state);
 
         /* Sets up a listener for the destroy event. */
-        output.destroy = WlzOutput::init_destroy(wlr_output.get_event_mut(OutputEvent::Destroy));
+        output.init_destroy();
+        wlr_output
+            .get_event_mut(OutputEvent::Destroy)
+            .add(&mut output.destroy);
 
         self.outputs.insert(&mut output.link);
 
@@ -158,6 +192,14 @@ impl WlzServer {
 
         // forget the memory, it is deallocated when destroy signal is received
         mem::forget(pinned);
+    }
+
+    fn new_xdg_toplevel(&mut self) {
+        unimplemented!()
+    }
+
+    fn new_xdg_popup(&mut self) {
+        unimplemented!()
     }
 
     pub fn display(&self) -> &Display {

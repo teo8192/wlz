@@ -283,6 +283,37 @@ impl Scene {
             ffi::wlr_scene_attach_output_layout(self.as_ptr(), output_layout.as_ptr())
         })
         .map(SceneOutputLayout)
-        .ok_or(WrapperError::FailedSceneAttachOutputLayout)
+        .ok_or_else(|| WrapperError::GeneralError("failed to attach output layout to scene".to_string()))
+    }
+}
+
+pub enum XdgShellEvent {
+    NewSurface,
+    NewToplevel,
+    NewPopup,
+    Destroy
+}
+
+#[derive(PtrWrapper)]
+pub struct XdgShell(NonNull<ffi::wlr_xdg_shell>);
+
+impl XdgShell {
+    pub fn create(display: &mut Display, version: u32) -> Result<XdgShell, WrapperError> {
+        NonNull::new(unsafe { ffi::wlr_xdg_shell_create(display.as_ptr(), version) })
+            .map(Self)
+            .ok_or_else(|| WrapperError::GeneralError("failed to create xdg shell".to_string()))
+    }
+
+    pub fn get_event_mut(&mut self, ty: XdgShellEvent) -> &mut Signal {
+        use XdgShellEvent::*;
+        let xdg_shell = unsafe { self.0.as_mut() };
+        let event_ptr = match ty {
+            NewSurface => &mut xdg_shell.events.new_surface,
+            NewToplevel => &mut xdg_shell.events.new_toplevel,
+            NewPopup => &mut xdg_shell.events.new_popup,
+            Destroy => &mut xdg_shell.events.destroy,
+        } as *mut ffi::wl_signal;
+        let signal_ptr = event_ptr as *mut Signal;
+        unsafe { &mut (*signal_ptr) as &mut Signal }
     }
 }

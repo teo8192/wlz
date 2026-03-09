@@ -3,6 +3,8 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 #![allow(unnecessary_transmutes)]
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::ptr_offset_with_cast)]
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 /// Add the specified listener to this signal.

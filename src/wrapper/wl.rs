@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::ffi::CStr;
 use std::marker::PhantomPinned;
-use std::mem;
 use std::ptr::{null_mut, NonNull};
 
 use wlz_macros::{c_drop, c_ptr, FromPtr, PtrWrapper};
@@ -90,15 +89,8 @@ pub struct List {
 }
 
 impl List {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        let mut list = unsafe { mem::zeroed() };
-        unsafe { ffi::wl_list_init(&mut list as *mut ffi::wl_list) };
-
-        Self {
-            list,
-            _pin: PhantomPinned,
-        }
+    pub fn init(&mut self) {
+        unsafe { ffi::wl_list_init(self.as_ptr()) };
     }
 
     pub fn empty() -> Self {
@@ -118,3 +110,9 @@ impl List {
 
 #[derive(FromPtr)]
 pub struct Signal(ffi::wl_signal);
+
+impl Signal {
+    pub fn add(&mut self, listener: &mut Listener) {
+        unsafe { ffi::wl_signal_add(self.as_ptr(), listener.as_ptr()) };
+    }
+}
