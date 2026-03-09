@@ -89,7 +89,7 @@ fn main() {
     let bindings = bindgen::Builder::default()
         // The input header we would like to generate
         // bindings for.
-        .header("wrapper.h")
+        .header("src/wrapper.h")
         .clang_args(clang_args)
         .blocklist_file(".*/math.h")
         // Tell cargo to invalidate the built crate whenever any of the
