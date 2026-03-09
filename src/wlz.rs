@@ -84,6 +84,15 @@ impl WlzServer {
         this.new_output =
             Self::init_new_output(this.backend.get_event_mut(BackendEvent::NewOutput));
 
+        /* Create a scene graph. This is a wlroots abstraction that handles all
+         * rendering and damage tracking. All the compositor author needs to do
+         * is add things that should be rendered to the scene graph at the proper
+         * positions and then call wlr_scene_output_commit() to render a frame if
+         * necessary.
+         */
+        this.scene = Scene::create()?;
+        this.scene_layout = this.scene.attach_output_layout(&mut this.output_layout)?;
+
         Ok(())
     }
 

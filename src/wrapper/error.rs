@@ -13,8 +13,11 @@ pub enum WrapperError {
     FailedToCreateOutputLayout,
     FailedOutputLayoutAddAuto,
     FailedToCreateSceneOutput,
+    FailedToCreateScene,
     FailedToAddSocket,
     FailedToInitializeDisplay,
+    FailedSceneAttachOutputLayout,
+    GeneralError(String),
 }
 
 impl Display for WrapperError {

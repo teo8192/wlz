@@ -263,9 +263,26 @@ pub struct SceneOutput(NonNull<ffi::wlr_scene_output>);
 pub struct Scene(NonNull<ffi::wlr_scene>);
 
 impl Scene {
+    pub fn create() -> Result<Self, WrapperError> {
+        NonNull::new(unsafe { ffi::wlr_scene_create() })
+            .map(Self)
+            .ok_or(WrapperError::FailedToCreateScene)
+    }
+
     pub fn output_create(&mut self, output: &mut Output) -> Result<SceneOutput, WrapperError> {
         NonNull::new(unsafe { ffi::wlr_scene_output_create(self.as_ptr(), output.as_ptr()) })
             .map(SceneOutput)
             .ok_or(WrapperError::FailedToCreateSceneOutput)
+    }
+
+    pub fn attach_output_layout(
+        &mut self,
+        output_layout: &mut OutputLayout,
+    ) -> Result<SceneOutputLayout, WrapperError> {
+        NonNull::new(unsafe {
+            ffi::wlr_scene_attach_output_layout(self.as_ptr(), output_layout.as_ptr())
+        })
+        .map(SceneOutputLayout)
+        .ok_or(WrapperError::FailedSceneAttachOutputLayout)
     }
 }
