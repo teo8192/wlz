@@ -9,9 +9,9 @@ pub enum LogLevel {
     Debug,
 }
 
-impl Into<ffi::wlr_log_importance> for LogLevel {
-    fn into(self) -> ffi::wlr_log_importance {
-        match self {
+impl From<LogLevel> for ffi::wlr_log_importance {
+    fn from(val: LogLevel) -> Self {
+        match val {
             LogLevel::Silent => ffi::wlr_log_importance_WLR_SILENT,
             LogLevel::Error => ffi::wlr_log_importance_WLR_ERROR,
             LogLevel::Info => ffi::wlr_log_importance_WLR_INFO,
