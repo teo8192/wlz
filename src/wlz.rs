@@ -1,9 +1,8 @@
-use std::mem;
-use std::pin::Pin;
+use std::mem::{self, MaybeUninit};
 use std::ptr::NonNull;
 use std::{error::Error, fmt};
 
-use wlz_macros::WlListeners;
+use wlz_macros::{initialization, WlListeners};
 
 use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
@@ -59,17 +58,15 @@ pub struct WlzServer {
 }
 
 impl WlzServer {
-    pub fn initialize(self: Pin<&mut Self>) -> Result<(), Box<dyn Error>> {
-        // SAFETY: self is pinned
-        let this = unsafe { self.get_unchecked_mut() };
+    #[initialization]
+    pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
+        self.display = Display::try_create()?;
+        self.backend = Backend::autocreate(self.display.get_event_loop())?;
+        self.renderer = Renderer::autocreate(&mut self.backend)?;
 
-        this.display = Display::try_create()?;
-        this.backend = Backend::autocreate(this.display.get_event_loop())?;
-        this.renderer = Renderer::autocreate(&mut this.backend)?;
+        self.renderer.init_wl_display(&mut self.display)?;
 
-        this.renderer.init_wl_display(&mut this.display)?;
-
-        this.allocator = Allocator::autocreate(&mut this.backend, &mut this.renderer)?;
+        self.allocator = Allocator::autocreate(&mut self.backend, &mut self.renderer)?;
 
         /* This creates some hands-off wlroots interfaces. The compositor is
          * necessary for clients to allocate surfaces, the subcompositor allows to
@@ -78,22 +75,22 @@ impl WlzServer {
          * to dig your fingers in and play with their behavior if you want. Note that
          * the clients cannot set the selection directly without compositor approval,
          * see the handling of the request_set_selection event below.*/
-        Compositor::create(&mut this.display, 5, &mut this.renderer)?;
-        SubCompositor::create(&mut this.display)?;
-        DataDeviceManager::create(&mut this.display)?;
+        Compositor::create(&mut self.display, 5, &mut self.renderer)?;
+        SubCompositor::create(&mut self.display)?;
+        DataDeviceManager::create(&mut self.display)?;
 
         /* Creates an output layout, which a wlroots utility for working with an
          * arrangement of screens in a physical layout. */
-        this.output_layout = OutputLayout::create(&mut this.display)?;
+        self.output_layout = OutputLayout::create(&mut self.display)?;
 
         /* Configure a listener to be notified when new outputs are available on the
          * backend. */
-        this.outputs.init();
+        self.outputs.init();
 
-        this.init_new_output();
-        this.backend
+        self.init_new_output();
+        self.backend
             .get_event_mut(BackendEvent::NewOutput)
-            .add(&mut this.new_output);
+            .add(&mut self.new_output);
 
         /* Create a scene graph. This is a wlroots abstraction that handles all
          * rendering and damage tracking. All the compositor author needs to do
@@ -101,23 +98,23 @@ impl WlzServer {
          * positions and then call wlr_scene_output_commit() to render a frame if
          * necessary.
          */
-        this.scene = Scene::create()?;
-        this.scene_layout = this.scene.attach_output_layout(&mut this.output_layout)?;
+        self.scene = Scene::create()?;
+        self.scene_layout = self.scene.attach_output_layout(&mut self.output_layout)?;
 
         /* Set up xdg-shell version 3. The xdg-shell is a Wayland protocol which is
          * used for application windows. For more detail on shells, refer to
          * https://drewdevault.com/2018/07/29/Wayland-shells.html.
          */
-        this.toplevels.init();
-        this.xdg_shell = XdgShell::create(&mut this.display, 3)?;
-        this.init_new_xdg_toplevel();
-        this.xdg_shell
+        self.toplevels.init();
+        self.xdg_shell = XdgShell::create(&mut self.display, 3)?;
+        self.init_new_xdg_toplevel();
+        self.xdg_shell
             .get_event_mut(XdgShellEvent::NewToplevel)
-            .add(&mut this.new_xdg_toplevel);
-        this.init_new_xdg_popup();
-        this.xdg_shell
+            .add(&mut self.new_xdg_toplevel);
+        self.init_new_xdg_popup();
+        self.xdg_shell
             .get_event_mut(XdgShellEvent::NewPopup)
-            .add(&mut this.new_xdg_popup);
+            .add(&mut self.new_xdg_popup);
 
         Ok(())
     }
@@ -147,8 +144,8 @@ impl WlzServer {
         state.finish();
 
         /* Allocates and configures our state for this output */
-        let mut pinned = unsafe { WlzOutput::uninitialized() };
-        pinned.as_mut().initialize(self, wlr_output);
+        let pinned = Box::pin(MaybeUninit::uninit());
+        let mut pinned = WlzOutput::initialize(pinned, self, wlr_output);
         let output = unsafe { pinned.as_mut().get_unchecked_mut() };
 
         /* Sets up a listener for the frame event. */
@@ -221,12 +218,10 @@ struct WlzOutput {
 }
 
 impl WlzOutput {
-    fn initialize(self: Pin<&mut Self>, server: &mut WlzServer, output: &mut Output) {
-        // SAFETY: self is pinned
-        let this = unsafe { self.get_unchecked_mut() };
-
-        this.server = NonNull::new(server as *mut WlzServer).unwrap();
-        this.output = NonNull::new(output as *mut Output).unwrap();
+    #[initialization]
+    fn init(&mut self, server: &mut WlzServer, output: &mut Output) {
+        self.server = NonNull::new(server as *mut WlzServer).unwrap();
+        self.output = NonNull::new(output as *mut Output).unwrap();
     }
 
     fn destroy(&mut self) {

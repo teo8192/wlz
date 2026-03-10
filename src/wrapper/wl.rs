@@ -3,7 +3,7 @@ use std::ffi::CStr;
 use std::marker::PhantomPinned;
 use std::ptr::{null_mut, NonNull};
 
-use wlz_macros::{c_drop, c_ptr, FromPtr, PtrWrapper};
+use wlz_macros::{c_drop, c_ptr, PtrWrapper};
 
 use crate::ffi;
 use crate::wrapper::WrapperError;
@@ -55,12 +55,6 @@ pub struct Listener {
     notify: ffi::wl_notify_func_t,
 }
 
-impl Drop for Listener {
-    fn drop(&mut self) {
-        unsafe { ffi::wl_list_remove(self.link.as_ptr()) };
-    }
-}
-
 type ListenerCallback =
     unsafe extern "C" fn(listener: *mut ffi::wl_listener, data: *mut ::std::os::raw::c_void);
 
@@ -70,6 +64,11 @@ impl Listener {
             link: List::empty(),
             notify: Some(notify),
         }
+    }
+
+    pub fn init(&mut self, notify: ListenerCallback) {
+        self.notify = Some(notify);
+        self.link.init();
     }
 
     pub fn empty() -> Self {
@@ -86,6 +85,19 @@ impl Listener {
 pub struct List {
     list: ffi::wl_list,
     _pin: PhantomPinned,
+}
+
+impl Drop for List {
+    fn drop(&mut self) {
+        if self.list.next.is_null() != self.list.prev.is_null() {
+            panic!("Trying to drop partially initialised list!");
+        }
+        if !self.list.next.is_null() {
+            unsafe { ffi::wl_list_remove(self.as_ptr()) };
+        } else {
+            panic!("Trying to drop uninitialized list!");
+        }
+    }
 }
 
 impl List {
@@ -108,11 +120,28 @@ impl List {
     }
 }
 
-#[derive(FromPtr)]
-pub struct Signal(ffi::wl_signal);
+#[c_ptr(ffi::wl_signal)]
+#[repr(C)]
+pub struct Signal {
+    listener_list: List,
+}
 
 impl Signal {
     pub fn add(&mut self, listener: &mut Listener) {
         unsafe { ffi::wl_signal_add(self.as_ptr(), listener.as_ptr()) };
+    }
+
+    pub fn emit(&mut self, data: *mut std::os::raw::c_void) {
+        unsafe { ffi::wl_signal_emit_mutable(self.as_ptr(), data) };
+    }
+
+    pub fn init(&mut self) {
+        self.listener_list.init();
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            listener_list: List::empty(),
+        }
     }
 }
