@@ -6,7 +6,7 @@ use wlz_macros::{initialization, WlListeners};
 
 use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
-    Allocator, Backend, BackendEvent, Compositor, DataDeviceManager, Output, OutputEvent,
+    Allocator, Backend, BackendEvent, Compositor, Cursor, DataDeviceManager, Output, OutputEvent,
     OutputLayout, OutputState, Renderer, Scene, SceneOutputLayout, SubCompositor, XdgShell,
     XdgShellEvent,
 };
@@ -51,6 +51,8 @@ pub struct WlzServer {
     #[listener("new_xdg_popup")]
     new_xdg_popup: Listener,
 
+    cursor: Cursor,
+
     allocator: Allocator,
     renderer: Renderer,
     backend: Backend,
@@ -60,12 +62,28 @@ pub struct WlzServer {
 impl WlzServer {
     #[initialization]
     pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
+        /* The Wayland display is managed by libwayland. It handles accepting
+         * clients from the Unix socket, manging Wayland globals, and so on. */
         self.display = Display::try_create()?;
+
+        /* The backend is a wlroots feature which abstracts the underlying input and
+         * output hardware. The autocreate option will choose the most suitable
+         * backend based on the current environment, such as opening an X11 window
+         * if an X11 server is running. */
         self.backend = Backend::autocreate(self.display.get_event_loop())?;
+
+        /* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
+         * can also specify a renderer using the WLR_RENDERER env var.
+         * The renderer is responsible for defining the various pixel formats it
+         * supports for shared memory, this configures that for clients. */
         self.renderer = Renderer::autocreate(&mut self.backend)?;
 
         self.renderer.init_wl_display(&mut self.display)?;
 
+        /* Autocreates an allocator for us.
+         * The allocator is the bridge between the renderer and the backend. It
+         * handles the buffer creation, allowing wlroots to render onto the
+         * screen */
         self.allocator = Allocator::autocreate(&mut self.backend, &mut self.renderer)?;
 
         /* This creates some hands-off wlroots interfaces. The compositor is
@@ -115,6 +133,13 @@ impl WlzServer {
         self.xdg_shell
             .get_event_mut(XdgShellEvent::NewPopup)
             .add(&mut self.new_xdg_popup);
+
+        /*
+         * Creates a cursor, which is a wlroots utility for tracking the cursor
+         * image shown on screen.
+         */
+        self.cursor = Cursor::create()?;
+        self.cursor.attach_output_layout(&mut self.output_layout);
 
         Ok(())
     }

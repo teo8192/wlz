@@ -17,8 +17,6 @@ pub struct Display(NonNull<ffi::wl_display>);
 
 impl Display {
     pub fn try_create() -> Result<Self, WrapperError> {
-        /* The Wayland display is managed by libwayland. It handles accepting
-         * clients from the Unix socket, manging Wayland globals, and so on. */
         NonNull::new(unsafe { ffi::wl_display_create() })
             .map(Self)
             .ok_or(WrapperError::FailedToCreateDisplay)
@@ -127,6 +125,14 @@ pub struct Signal {
 }
 
 impl Signal {
+    /// Add the specified listener to this signal.
+    ///
+    /// # Parameters
+    /// - `signal` The signal that will emit events to the listener
+    /// - `listener` The listener to add
+    ///
+    /// # See also
+    /// `wl_signal`
     pub fn add(&mut self, listener: &mut Listener) {
         unsafe { ffi::wl_signal_add(self.as_ptr(), listener.as_ptr()) };
     }
