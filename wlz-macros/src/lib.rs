@@ -85,9 +85,9 @@ pub fn derive_ptr_wrapper(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl ::core::convert::Into<*mut #inner_ty> for &#name {
-            fn into(self) -> *mut #inner_ty {
-                self.0.as_ptr()
+        impl ::core::convert::From<&#name> for *mut #inner_ty {
+            fn from(value: &#name) -> *mut #inner_ty {
+                value.0.as_ptr()
             }
         }
 
