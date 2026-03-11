@@ -131,8 +131,13 @@ impl Signal {
         unsafe { ffi::wl_signal_add(self.as_ptr(), listener.as_ptr()) };
     }
 
-    pub fn emit(&mut self, data: *mut std::os::raw::c_void) {
-        unsafe { ffi::wl_signal_emit_mutable(self.as_ptr(), data) };
+    pub fn emit(&mut self) {
+        unsafe { ffi::wl_signal_emit_mutable(self.as_ptr(), null_mut()) };
+    }
+
+    pub fn emit_arg<T>(&mut self, data: &mut T) {
+        let ptr = data as *mut T;
+        unsafe { ffi::wl_signal_emit_mutable(self.as_ptr(), ptr as *mut std::os::raw::c_void) };
     }
 
     pub fn init(&mut self) {
