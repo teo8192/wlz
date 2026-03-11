@@ -461,10 +461,10 @@ pub fn initialization(attr: TokenStream, item: TokenStream) -> TokenStream {
         ReturnKind::Result => {
             let (_ok, err) = extract_result(get_return_type(ret)).unwrap();
             // TODO make sure ok is ()
-            quote! { Result<::std::pin::Pin<Box<Self>>, #err> }
+            quote! { Result<::std::pin::Pin<&'a mut Self>, #err> }
         },
-        ReturnKind::Option => quote! { Option<::std::pin::Pin<Box<Self>>> },
-        ReturnKind::Plain => quote! { ::std::pin::Pin<Box<Self>> },
+        ReturnKind::Option => quote! { Option<::std::pin::Pin<&'a mut Self>> },
+        ReturnKind::Plain => quote! { ::std::pin::Pin<&'a mut Self> },
         ReturnKind::Unknown => {
             return syn::Error::new(ret.span(), "must either be Result<(), T>, Option<()> or ()")
                 .to_compile_error()
@@ -475,9 +475,9 @@ pub fn initialization(attr: TokenStream, item: TokenStream) -> TokenStream {
     let result_handler = match ret_kind {
         ReturnKind::Result |
         ReturnKind::Option => quote! {
-            result.map(|_| new_box)
+            result.map(|_| new_ptr)
         },
-        ReturnKind::Plain => quote! { new_box },
+        ReturnKind::Plain => quote! { new_ptr },
         ReturnKind::Unknown => unreachable!(),
     };
 
@@ -485,13 +485,16 @@ pub fn initialization(attr: TokenStream, item: TokenStream) -> TokenStream {
         #func
 
         /// In place initialization
-        #vis fn initialize(mut uninit: ::std::pin::Pin<Box<::std::mem::MaybeUninit<Self>>> #(, #args)*) -> #ret_type {
-            let box_ptr = unsafe { uninit.as_mut().get_unchecked_mut().as_mut_ptr() };
+        #vis fn initialize<'a>(ref mut uninit: ::std::pin::Pin<&'a mut ::std::mem::MaybeUninit<Self>> #(, #args)*) -> #ret_type {
+            // must reborrow uninit here (another .as_mut() call)
+            let old_ptr = unsafe { uninit.as_mut().get_unchecked_mut().as_mut_ptr() };
             ::std::mem::forget(uninit);
 
-            let result = unsafe { box_ptr.as_mut().unwrap() }.#fn_name(#(#arg_idents),*);
+            let result = unsafe { old_ptr.as_mut().unwrap() }.#fn_name(#(#arg_idents),*);
 
-            let new_box = Box::into_pin(unsafe { Box::from_raw(box_ptr) });
+            // SAFETY:
+            // This is safe, since we know that the value being pointed to is pinned
+            let new_ptr: ::std::pin::Pin<&mut Self> = unsafe { ::std::pin::Pin::new_unchecked(old_ptr.as_mut().unwrap()) };
 
             #result_handler
         }

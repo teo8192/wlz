@@ -80,8 +80,8 @@ mod tests {
     #[test]
     fn trampoline_test() {
         // setup
-        let lt = Box::pin(MaybeUninit::uninit());
-        let mut lt = ListenerTest::initialize(lt);
+        let mut lt = Box::pin(MaybeUninit::uninit());
+        let mut lt = ListenerTest::initialize(lt.as_mut());
         let lt = unsafe { lt.as_mut().get_unchecked_mut() };
         let mut signal = Signal::empty();
         signal.init();
@@ -93,8 +93,8 @@ mod tests {
 
     #[test]
     fn multiple_listener_calls() {
-        let lt = Box::pin(MaybeUninit::uninit());
-        let mut lt = ListenerTest::initialize(lt);
+        let mut lt = Box::pin(MaybeUninit::uninit());
+        let mut lt = ListenerTest::initialize(lt.as_mut());
         let lt = unsafe { lt.as_mut().get_unchecked_mut() };
         let mut signal = Signal::empty();
         signal.init();
@@ -112,8 +112,8 @@ mod tests {
 
     #[test]
     fn trampoline_with_data() {
-        let lt = Box::pin(MaybeUninit::uninit());
-        let mut lt = ListenerTest::initialize(lt);
+        let mut lt = Box::pin(MaybeUninit::uninit());
+        let mut lt = ListenerTest::initialize(lt.as_mut());
         let lt = unsafe { lt.as_mut().get_unchecked_mut() };
         let mut signal = Signal::empty();
         signal.init();
@@ -131,13 +131,13 @@ mod tests {
 
     #[test]
     fn destruction_pattern() {
-        let pinned = Box::pin(MaybeUninit::uninit());
-        let mut pinned = ListenerTest::initialize(pinned);
-        let lt = unsafe { pinned.as_mut().get_unchecked_mut() };
+        let mut pin_box = Box::pin(MaybeUninit::uninit());
+        let mut lt = ListenerTest::initialize(pin_box.as_mut());
+        let lt = unsafe { lt.as_mut().get_unchecked_mut() };
         let mut signal = Signal::empty();
         signal.init();
         signal.add(&mut lt.destroy);
-        mem::forget(pinned);
+        mem::forget(pin_box);
 
         // do emit signal to do method call
         signal.emit();

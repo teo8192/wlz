@@ -177,9 +177,9 @@ impl WlzServer {
         state.finish();
 
         /* Allocates and configures our state for this output */
-        let pinned = Box::pin(MaybeUninit::uninit());
-        let mut pinned = WlzOutput::initialize(pinned, self, wlr_output);
-        let output = unsafe { pinned.as_mut().get_unchecked_mut() };
+        let mut pinned_box = Box::pin(MaybeUninit::uninit());
+        let output = WlzOutput::initialize(pinned_box.as_mut(), self, wlr_output);
+        let output = unsafe { output.get_unchecked_mut() };
 
         /* Sets up a listener for the frame event. */
         output.init_frame();
@@ -221,7 +221,7 @@ impl WlzServer {
         }
 
         // forget the memory, it is deallocated when destroy signal is received
-        mem::forget(pinned);
+        mem::forget(pinned_box);
     }
 
     fn new_xdg_toplevel(&mut self) {
