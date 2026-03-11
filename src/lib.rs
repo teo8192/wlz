@@ -6,7 +6,7 @@ pub use memoffset;
 
 #[cfg(test)]
 mod tests {
-    use std::mem::MaybeUninit;
+    use std::mem::{self, MaybeUninit};
 
     use wlz_macros::{initialization, WlListeners};
 
@@ -36,6 +36,9 @@ mod tests {
         #[listener("without_data_test_cb")]
         without_data_test: Listener,
 
+        #[listener("destroy_cb")]
+        destroy: Listener,
+
         num_c: u32,
         num_d: u32,
     }
@@ -45,6 +48,7 @@ mod tests {
         fn init(&mut self) {
             self.init_with_data_test();
             self.init_without_data_test();
+            self.init_destroy();
 
             self.num_a = 0;
             self.num_b = 1;
@@ -66,6 +70,10 @@ mod tests {
 
         fn without_data_test_cb(&mut self) {
             self.selftest();
+        }
+
+        fn destroy_cb(&mut self) {
+            drop(unsafe { Box::from_raw(self as *mut Self) });
         }
     }
 
@@ -119,5 +127,19 @@ mod tests {
 
         // do emit signal to do method call
         signal.emit_arg(&mut data);
+    }
+
+    #[test]
+    fn destruction_pattern() {
+        let pinned = Box::pin(MaybeUninit::uninit());
+        let mut pinned = ListenerTest::initialize(pinned);
+        let lt = unsafe { pinned.as_mut().get_unchecked_mut() };
+        let mut signal = Signal::empty();
+        signal.init();
+        signal.add(&mut lt.destroy);
+        mem::forget(pinned);
+
+        // do emit signal to do method call
+        signal.emit();
     }
 }
