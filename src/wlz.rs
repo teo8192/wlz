@@ -7,8 +7,8 @@ use wlz_macros::{initialization, WlListeners};
 use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
     Allocator, Backend, BackendEvent, Compositor, Cursor, DataDeviceManager, Output, OutputEvent,
-    OutputLayout, OutputState, Renderer, Scene, SceneOutputLayout, SubCompositor, XdgShell,
-    XdgShellEvent,
+    OutputLayout, OutputState, Renderer, Scene, SceneOutputLayout, SubCompositor, XCursorManager,
+    XdgShell, XdgShellEvent,
 };
 use crate::wrapper::WrapperError;
 use crate::{error, ffi};
@@ -50,6 +50,8 @@ pub struct WlzServer {
 
     #[listener("new_xdg_popup")]
     new_xdg_popup: Listener,
+
+    cursor_mgr: XCursorManager,
 
     cursor: Cursor,
 
@@ -140,6 +142,12 @@ impl WlzServer {
          */
         self.cursor = Cursor::create()?;
         self.cursor.attach_output_layout(&mut self.output_layout);
+
+        /* Creates an xcursor manager, another wlroots utility which loads up
+         * Xcursor themes to source cursor images from and makes sure that cursor
+         * images are available at all scale factors on the screen (necessary for
+         * HiDPI support). */
+        self.cursor_mgr = XCursorManager::create(None, 24)?;
 
         Ok(())
     }

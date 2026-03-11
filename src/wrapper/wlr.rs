@@ -1,5 +1,8 @@
+use std::error::Error;
+use std::ffi::CString;
 use std::mem::zeroed;
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{null, null_mut, NonNull};
+use std::str::FromStr;
 
 use wlz_macros::{c_drop, FromPtr, PtrWrapper};
 
@@ -349,5 +352,29 @@ impl Cursor {
     #[doc = "Uses the given layout to establish the boundaries and movement semantics of\n this cursor. Cursors without an output layout allow infinite movement in any\n direction and do not support absolute input events."]
     pub fn attach_output_layout(&mut self, output_layout: &mut OutputLayout) {
         unsafe { ffi::wlr_cursor_attach_output_layout(self.as_ptr(), output_layout.as_ptr()) };
+    }
+}
+
+#[doc = "struct wlr_xcursor_manager dynamically loads xcursor themes at sizes necessary\n for use on outputs at arbitrary scale factors. You should call\n wlr_xcursor_manager_load() for each output you will show your cursor on, with\n the scale factor parameter set to that output's scale factor."]
+#[c_drop(ffi::wlr_xcursor_manager_destroy)]
+#[derive(PtrWrapper)]
+pub struct XCursorManager(NonNull<ffi::wlr_xcursor_manager>);
+
+impl XCursorManager {
+    #[doc = "Creates a new XCursor manager with the given xcursor theme name and base size\n (for use when scale=1)."]
+    pub fn create(name: Option<&str>, size: u32) -> Result<Self, Box<dyn Error>> {
+        let nn = if let Some(name) = name {
+            CString::from_str(name)
+        } else {
+            CString::from_str("")
+        }?;
+        let ptr = if name.is_some() { nn.as_ptr() } else { null() };
+        Ok(
+            NonNull::new(unsafe { ffi::wlr_xcursor_manager_create(ptr, size) })
+                .map(Self)
+                .ok_or_else(|| {
+                    WrapperError::GeneralError("Failed to create xcursor manager".to_string())
+                })?,
+        )
     }
 }
