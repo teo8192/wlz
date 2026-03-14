@@ -195,11 +195,12 @@ impl Output {
         };
     }
 
-    #[doc = "Returns the preferred mode for this output. If the output doesn't support\n modes, returns NULL."]
-    pub fn preferred_mode(self: Pin<&mut Self>) -> Option<&mut OutputMode> {
+    /// Returns the preferred mode for this output. If the output doesn't support
+    /// modes, returns NULL.
+    pub fn preferred_mode(self: Pin<&mut Self>) -> Option<Pin<&mut OutputMode>> {
         let mode = unsafe { ffi::wlr_output_preferred_mode(self.get_unchecked_mut().as_ptr()) };
 
-        NonNull::new(mode).map(|m| unsafe { OutputMode::from_ptr(m) })
+        NonNull::new(mode).map(|m| unsafe { Pin::new_unchecked(OutputMode::from_ptr(m)) })
     }
 
     /// Attempts to apply the state to this output. This function may fail for any
@@ -246,14 +247,22 @@ impl OutputState {
         output_state
     }
 
-    #[doc = "Enables or disables an output. A disabled output is turned off and doesn't\n emit `frame` events.\n\n This state will be applied once wlr_output_commit_state() is called."]
+    /// Enables or disables an output. A disabled output is turned off and doesn't
+    /// emit `frame` events.
+    ///
+    /// This state will be applied once wlr_output_commit_state() is called.
     pub fn set_enabled(&mut self, enabled: bool) {
         unsafe { ffi::wlr_output_state_set_enabled(self.as_ptr(), enabled) };
     }
 
-    #[doc = "Sets the output mode of an output. An output mode will specify the resolution\n and refresh rate, among other things.\n\n This state will be applied once wlr_output_commit_state() is called."]
-    pub fn set_mode(&mut self, output_mode: &mut OutputMode) {
-        unsafe { ffi::wlr_output_state_set_mode(self.as_ptr(), output_mode.as_ptr()) };
+    /// Sets the output mode of an output. An output mode will specify the resolution
+    /// and refresh rate, among other things.
+    ///
+    /// This state will be applied once wlr_output_commit_state() is called.
+    pub fn set_mode(&mut self, output_mode: Pin<&mut OutputMode>) {
+        unsafe {
+            ffi::wlr_output_state_set_mode(self.as_ptr(), output_mode.get_unchecked_mut().as_ptr())
+        };
     }
 
     #[doc = "Releases all resources associated with an output state."]
@@ -263,7 +272,7 @@ impl OutputState {
 }
 
 #[derive(FromPtr)]
-pub struct OutputMode(ffi::wlr_output_mode);
+pub struct OutputMode(ffi::wlr_output_mode, PhantomPinned);
 
 #[derive(PtrWrapper)]
 pub struct SceneOutputLayout(NonNull<ffi::wlr_scene_output_layout>);
