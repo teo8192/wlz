@@ -12,43 +12,34 @@ use super::WrapperError;
 use crate::ffi;
 use crate::wrapper::wl::{Display, Signal};
 
-#[doc = "A backend provides a set of input and output devices.\n\n Buffer capabilities and features can change over the lifetime of a backend,\n for instance when a child backend is added to a multi-backend."]
+/// A backend provides a set of input and output devices.
+///
+/// Buffer capabilities and features can change over the lifetime of a backend,
+/// for instance when a child backend is added to a multi-backend.
 #[derive(PtrWrapper)]
 #[c_drop(ffi::wlr_backend_destroy)]
 pub struct Backend(NonNull<ffi::wlr_backend>);
 
-pub enum BackendEvent {
-    Destroy,
-    NewInput,
-    NewOutput,
-}
-
 impl Backend {
-    #[doc = "Automatically initializes the most suitable backend given the environment.\n Will always return a multi-backend. The backend is created but not started.\n Returns NULL on failure.\n\n If session_ptr is not NULL, it's populated with the session which has been\n created with the backend, if any.\n\n The multi-backend will be destroyed if one of the primary underlying\n backends is destroyed (e.g. if the primary DRM device is unplugged)."]
+    /// Automatically initializes the most suitable backend given the environment.
+    /// Will always return a multi-backend. The backend is created but not started.
+    /// Returns NULL on failure.
+    ///
+    /// If session_ptr is not NULL, it's populated with the session which has been
+    /// created with the backend, if any.
+    ///
+    /// The multi-backend will be destroyed if one of the primary underlying
+    /// backends is destroyed (e.g. if the primary DRM device is unplugged).
     pub fn autocreate(event_loop: EventLoop) -> Result<Self, WrapperError> {
         NonNull::new(unsafe { ffi::wlr_backend_autocreate(event_loop.as_ptr(), null_mut()) })
             .map(Self)
             .ok_or(WrapperError::FailedToCreateBackend)
     }
 
-    pub fn get_event(&self, event: BackendEvent) -> Pin<&Signal> {
-        use BackendEvent::*;
+    pub fn new_output_event(&mut self) -> Pin<&mut Signal<Output>> {
         unsafe {
-            Signal::get_event(Pin::new_unchecked(self.as_ref()), |v| match event {
-                Destroy => &v.events.destroy,
-                NewInput => &v.events.new_input,
-                NewOutput => &v.events.new_output,
-            })
-        }
-    }
-
-    pub fn get_event_mut(&mut self, event: BackendEvent) -> Pin<&mut Signal> {
-        use BackendEvent::*;
-        unsafe {
-            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| match event {
-                Destroy => &mut v.events.destroy,
-                NewInput => &mut v.events.new_input,
-                NewOutput => &mut v.events.new_output,
+            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| {
+                &mut v.events.new_output
             })
         }
     }
@@ -170,18 +161,28 @@ impl OutputLayout {
 #[derive(PtrWrapper)]
 pub struct OutputLayoutOutput(NonNull<ffi::wlr_output_layout_output>);
 
-pub enum OutputEvent {
-    Frame,
-    RequestState,
-    Destroy,
-}
-
-#[doc = "A compositor output region. This typically corresponds to a monitor that\n displays part of the compositor space.\n\n The `frame` event will be emitted when it is a good time for the compositor\n to submit a new frame.\n\n To render a new frame compositors should call wlr_output_begin_render_pass(),\n perform rendering on that render pass, and finally call\n wlr_output_commit_state()."]
+/// A compositor output region. This typically corresponds to a monitor that
+/// displays part of the compositor space.
+///
+/// The `frame` event will be emitted when it is a good time for the compositor
+/// to submit a new frame.
+///
+/// To render a new frame compositors should call wlr_output_begin_render_pass(),
+/// perform rendering on that render pass, and finally call
+/// wlr_output_commit_state()."]
 #[derive(FromPtr)]
 pub struct Output(ffi::wlr_output);
 
 impl Output {
-    #[doc = "Initialize the output's rendering subsystem with the provided allocator and\n renderer. After initialization, this function may invoked again to reinitialize\n the allocator and renderer to different values.\n\n Call this function prior to any call to wlr_output_begin_render_pass(),\n wlr_output_commit_state() or wlr_output_cursor_create().\n\n The buffer capabilities of the provided must match the capabilities of the\n output's backend. Returns false otherwise."]
+    /// Initialize the output's rendering subsystem with the provided allocator and
+    /// renderer. After initialization, this function may invoked again to reinitialize
+    /// the allocator and renderer to different values.
+    ///
+    /// Call this function prior to any call to wlr_output_begin_render_pass(),
+    /// wlr_output_commit_state() or wlr_output_cursor_create().
+    ///
+    /// The buffer capabilities of the provided must match the capabilities of the
+    /// output's backend. Returns false otherwise.
     pub fn init_renderer(&mut self, allocator: &mut Allocator, renderer: &mut Renderer) {
         // TODO: handle error
         unsafe {
@@ -207,30 +208,22 @@ impl Output {
         unsafe { ffi::wlr_output_commit_state(self.as_ptr(), state.as_ptr()) };
     }
 
-    pub fn get_event(self: Pin<&Self>, ty: OutputEvent) -> Pin<&Signal> {
-        use OutputEvent::*;
+    pub fn frame_event(self: Pin<&mut Self>) -> Pin<&mut Signal> {
         // SAFETY: This is safe since the interior does not move out of the reference,
         // and the returned value does not move since it is a field of the pinned value
-        unsafe {
-            Signal::get_event(self, |v| match ty {
-                Frame => &v.0.events.frame,
-                RequestState => &v.0.events.request_state,
-                Destroy => &v.0.events.destroy,
-            })
-        }
+        unsafe { Signal::get_event_mut(self, |v| &mut v.0.events.frame) }
     }
 
-    pub fn get_event_mut(self: Pin<&mut Self>, ty: OutputEvent) -> Pin<&mut Signal> {
-        use OutputEvent::*;
+    pub fn request_state_event(self: Pin<&mut Self>) -> Pin<&mut Signal> {
         // SAFETY: This is safe since the interior does not move out of the reference,
         // and the returned value does not move since it is a field of the pinned value
-        unsafe {
-            Signal::get_event_mut(self, |v| match ty {
-                Frame => &mut v.0.events.frame,
-                RequestState => &mut v.0.events.request_state,
-                Destroy => &mut v.0.events.destroy,
-            })
-        }
+        unsafe { Signal::get_event_mut(self, |v| &mut v.0.events.request_state) }
+    }
+
+    pub fn destroy_event(self: Pin<&mut Self>) -> Pin<&mut Signal> {
+        // SAFETY: This is safe since the interior does not move out of the reference,
+        // and the returned value does not move since it is a field of the pinned value
+        unsafe { Signal::get_event_mut(self, |v| &mut v.0.events.destroy) }
     }
 }
 
@@ -341,21 +334,25 @@ pub enum XdgShellEvent {
 pub struct XdgShell(NonNull<ffi::wlr_xdg_shell>);
 
 impl XdgShell {
-    #[doc = "Create the xdg_wm_base global with the specified version."]
+    /// Create the xdg_wm_base global with the specified version.
     pub fn create(display: &mut Display, version: u32) -> Result<XdgShell, WrapperError> {
         NonNull::new(unsafe { ffi::wlr_xdg_shell_create(display.as_ptr(), version) })
             .map(Self)
             .ok_or_else(|| WrapperError::GeneralError("failed to create xdg shell".to_string()))
     }
 
-    pub fn get_event_mut(&mut self, ty: XdgShellEvent) -> Pin<&mut Signal> {
-        use XdgShellEvent::*;
+    pub fn new_toplevel_event(&mut self) -> Pin<&mut Signal<XdgToplevel>> {
         unsafe {
-            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| match ty {
-                NewSurface => &mut v.events.new_surface,
-                NewToplevel => &mut v.events.new_toplevel,
-                NewPopup => &mut v.events.new_popup,
-                Destroy => &mut v.events.destroy,
+            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| {
+                &mut v.events.new_toplevel
+            })
+        }
+    }
+
+    pub fn new_popup_event(&mut self) -> Pin<&mut Signal<XdgPopup>> {
+        unsafe {
+            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| {
+                &mut v.events.new_popup
             })
         }
     }
@@ -378,13 +375,17 @@ impl Cursor {
     }
 }
 
-#[doc = "struct wlr_xcursor_manager dynamically loads xcursor themes at sizes necessary\n for use on outputs at arbitrary scale factors. You should call\n wlr_xcursor_manager_load() for each output you will show your cursor on, with\n the scale factor parameter set to that output's scale factor."]
+/// struct wlr_xcursor_manager dynamically loads xcursor themes at sizes necessary
+/// for use on outputs at arbitrary scale factors. You should call
+/// wlr_xcursor_manager_load() for each output you will show your cursor on, with
+/// the scale factor parameter set to that output's scale factor.
 #[c_drop(ffi::wlr_xcursor_manager_destroy)]
 #[derive(PtrWrapper)]
 pub struct XCursorManager(NonNull<ffi::wlr_xcursor_manager>);
 
 impl XCursorManager {
-    #[doc = "Creates a new XCursor manager with the given xcursor theme name and base size\n (for use when scale=1)."]
+    /// Creates a new XCursor manager with the given xcursor theme name and base size
+    /// (for use when scale=1).
     pub fn create(name: Option<&str>, size: u32) -> Result<Self, Box<dyn Error>> {
         let nn = if let Some(name) = name {
             CString::from_str(name)
@@ -401,3 +402,9 @@ impl XCursorManager {
         )
     }
 }
+
+#[derive(FromPtr)]
+pub struct XdgToplevel(ffi::wlr_xdg_toplevel);
+
+#[derive(FromPtr)]
+pub struct XdgPopup(ffi::wlr_xdg_popup);

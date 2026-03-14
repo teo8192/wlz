@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::ffi::CStr;
-use std::marker::PhantomPinned;
+use std::marker::{PhantomData, PhantomPinned};
 use std::pin::Pin;
 use std::ptr::{null_mut, NonNull};
 
@@ -51,20 +51,22 @@ impl Display {
 #[c_ptr(ffi::wl_listener)]
 #[repr(C)]
 #[pin_project]
-pub struct Listener {
+pub struct Listener<T = ()> {
     #[pin]
     link: List,
     notify: ffi::wl_notify_func_t,
+    _data: PhantomData<T>,
 }
 
 type ListenerCallback =
     unsafe extern "C" fn(listener: *mut ffi::wl_listener, data: *mut ::std::os::raw::c_void);
 
-impl Listener {
+impl<T> Listener<T> {
     pub fn new(notify: ListenerCallback) -> Self {
         Self {
             link: List::empty(),
             notify: Some(notify),
+            _data: PhantomData,
         }
     }
 
@@ -78,6 +80,7 @@ impl Listener {
         Self {
             link: List::empty(),
             notify: None,
+            _data: PhantomData,
         }
     }
 }
@@ -131,12 +134,16 @@ impl List {
 #[c_ptr(ffi::wl_signal)]
 #[repr(C)]
 #[pin_project]
-pub struct Signal {
+pub struct Signal<T = ()> {
     #[pin]
     listener_list: List,
+    _data: PhantomData<T>,
 }
 
-impl Signal {
+pub trait IsUnit {}
+impl IsUnit for () {}
+
+impl<T> Signal<T> {
     /// Add the specified listener to this signal.
     ///
     /// # Parameters
@@ -145,7 +152,7 @@ impl Signal {
     ///
     /// # See also
     /// `wl_signal`
-    pub fn add(self: Pin<&mut Self>, listener: Pin<&mut Listener>) {
+    pub fn add(self: Pin<&mut Self>, listener: Pin<&mut Listener<T>>) {
         unsafe {
             ffi::wl_signal_add(
                 self.get_unchecked_mut().as_ptr(),
@@ -154,11 +161,14 @@ impl Signal {
         };
     }
 
-    pub fn emit(self: Pin<&mut Self>) {
+    pub fn emit(self: Pin<&mut Self>)
+    where
+        T: IsUnit,
+    {
         unsafe { ffi::wl_signal_emit_mutable(self.get_unchecked_mut().as_ptr(), null_mut()) };
     }
 
-    pub fn emit_arg<T>(self: Pin<&mut Self>, data: &mut T) {
+    pub fn emit_arg(self: Pin<&mut Self>, data: &mut T) {
         let ptr = data as *mut T;
         unsafe {
             ffi::wl_signal_emit_mutable(
@@ -175,6 +185,7 @@ impl Signal {
     pub fn empty() -> Self {
         Self {
             listener_list: List::empty(),
+            _data: PhantomData,
         }
     }
 
@@ -184,9 +195,9 @@ impl Signal {
     /// will not move so long as the argument value does not move (for example,
     /// because it is one of the fields of that value), and also that you do
     /// not move out of the argument you receive to the interior function.
-    pub unsafe fn get_event<T, F>(obj: Pin<&T>, func: F) -> Pin<&Self>
+    pub unsafe fn get_event<U, F>(obj: Pin<&U>, func: F) -> Pin<&Self>
     where
-        F: Fn(&T) -> &ffi::wl_signal,
+        F: Fn(&U) -> &ffi::wl_signal,
     {
         unsafe {
             obj.map_unchecked(|v| {
@@ -203,9 +214,9 @@ impl Signal {
     /// will not move so long as the argument value does not move (for example,
     /// because it is one of the fields of that value), and also that you do
     /// not move out of the argument you receive to the interior function.
-    pub unsafe fn get_event_mut<T, F>(obj: Pin<&mut T>, func: F) -> Pin<&mut Self>
+    pub unsafe fn get_event_mut<U, F>(obj: Pin<&mut U>, func: F) -> Pin<&mut Self>
     where
-        F: Fn(&mut T) -> &mut ffi::wl_signal,
+        F: Fn(&mut U) -> &mut ffi::wl_signal,
     {
         unsafe {
             obj.map_unchecked_mut(|v| {

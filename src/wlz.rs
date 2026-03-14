@@ -8,9 +8,9 @@ use wlz_macros::{initialization, WlListeners};
 
 use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
-    Allocator, Backend, BackendEvent, Compositor, Cursor, DataDeviceManager, Output, OutputEvent,
-    OutputLayout, OutputState, Renderer, Scene, SceneOutputLayout, SubCompositor, XCursorManager,
-    XdgShell, XdgShellEvent,
+    Allocator, Backend, Compositor, Cursor, DataDeviceManager, Output, OutputLayout, OutputState,
+    Renderer, Scene, SceneOutputLayout, SubCompositor, XCursorManager, XdgPopup, XdgShell,
+    XdgToplevel,
 };
 use crate::wrapper::WrapperError;
 use crate::{destroy_object, error};
@@ -40,8 +40,8 @@ pub struct WlzServer {
     #[pin]
     outputs: List,
     #[pin]
-    #[listener("new_output", Output)]
-    new_output: Listener,
+    #[listener(callback = new_output)]
+    new_output: Listener<Output>,
     // field order is important, they are dropped in the order they are declared
     output_layout: OutputLayout,
 
@@ -52,12 +52,12 @@ pub struct WlzServer {
     toplevels: List,
     xdg_shell: XdgShell,
     #[pin]
-    #[listener("new_xdg_toplevel")]
-    new_xdg_toplevel: Listener,
+    #[listener(callback = new_xdg_toplevel)]
+    new_xdg_toplevel: Listener<XdgToplevel>,
 
     #[pin]
-    #[listener("new_xdg_popup")]
-    new_xdg_popup: Listener,
+    #[listener(callback = new_xdg_popup)]
+    new_xdg_popup: Listener<XdgPopup>,
 
     cursor_mgr: XCursorManager,
 
@@ -116,9 +116,7 @@ impl WlzServer {
          * backend. */
         this.outputs.init();
 
-        this.backend
-            .get_event_mut(BackendEvent::NewOutput)
-            .add(this.new_output);
+        this.backend.new_output_event().add(this.new_output);
 
         /* Create a scene graph. This is a wlroots abstraction that handles all
          * rendering and damage tracking. All the compositor author needs to do
@@ -137,11 +135,9 @@ impl WlzServer {
         *this.xdg_shell = XdgShell::create(this.display, 3)?;
 
         this.xdg_shell
-            .get_event_mut(XdgShellEvent::NewToplevel)
+            .new_toplevel_event()
             .add(this.new_xdg_toplevel);
-        this.xdg_shell
-            .get_event_mut(XdgShellEvent::NewPopup)
-            .add(this.new_xdg_popup);
+        this.xdg_shell.new_popup_event().add(this.new_xdg_popup);
 
         /*
          * Creates a cursor, which is a wlroots utility for tracking the cursor
@@ -198,19 +194,19 @@ impl WlzServer {
         /* Sets up a listener for the frame event. */
         wlr_output
             .as_mut()
-            .get_event_mut(OutputEvent::Frame)
+            .frame_event()
             .add(output.as_mut().project().frame);
 
         /* Sets up a listener for the state request event. */
         wlr_output
             .as_mut()
-            .get_event_mut(OutputEvent::RequestState)
+            .request_state_event()
             .add(output.as_mut().project().request_state);
 
         /* Sets up a listener for the destroy event. */
         wlr_output
             .as_mut()
-            .get_event_mut(OutputEvent::Destroy)
+            .destroy_event()
             .add(output.as_mut().project().destroy);
 
         this.outputs.insert(output.project().link);
@@ -239,11 +235,11 @@ impl WlzServer {
         mem::forget(pinned_box);
     }
 
-    fn new_xdg_toplevel(self: Pin<&mut Self>) {
+    fn new_xdg_toplevel(self: Pin<&mut Self>, _xdg_toplevel: Pin<&mut XdgToplevel>) {
         unimplemented!()
     }
 
-    fn new_xdg_popup(self: Pin<&mut Self>) {
+    fn new_xdg_popup(self: Pin<&mut Self>, _xdg_popup: Pin<&mut XdgPopup>) {
         unimplemented!()
     }
 
@@ -260,13 +256,13 @@ struct WlzOutput {
     server: NonNull<WlzServer>,
     output: NonNull<Output>,
     #[pin]
-    #[listener("frame")]
+    #[listener(callback = frame)]
     frame: Listener,
     #[pin]
-    #[listener("request_state")]
+    #[listener(callback = request_state)]
     request_state: Listener,
     #[pin]
-    #[listener("destroy")]
+    #[listener(callback = destroy)]
     destroy: Listener,
 }
 

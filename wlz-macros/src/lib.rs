@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use syn::{
-    Attribute, Data, DeriveInput, Field, Fields, FnArg, GenericArgument, Ident, Item, LitStr, Pat, Path, PathArguments, Receiver, ReturnType, Token, Type, parse::{Parse, ParseStream}, parse_macro_input, spanned::Spanned
+    Attribute, Data, DeriveInput, Field, Fields, FnArg, GenericArgument, Ident, Item, Pat, Path, PathArguments, Receiver, ReturnType, Token, Type, TypePath, parse::{Parse, ParseStream}, parse_macro_input, spanned::Spanned
 };
 use heck::ToSnakeCase;
 
@@ -102,39 +102,67 @@ pub fn derive_ptr_wrapper(input: TokenStream) -> TokenStream {
     .into()
 }
 
-struct ListenerAttr {
-    name: LitStr,
-    ty: Option<Path>
+struct Callback {
+    callback: Path,
 }
 
-impl Parse for ListenerAttr {
+impl Parse for Callback {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        // parse the first argument (string literal)
-        let name: LitStr = input.parse()?;
+        let key: Ident = input.parse()?;
+        if key != "callback" {
+            return Err(syn::Error::new(key.span(), "expected `callback`"));
+        }
 
-        // check if there is a comma + second argument
-        let ty = if input.peek(Token![,]) {
-            let _comma: Token![,] = input.parse()?;
-            Some(input.parse::<Path>()?)
-        } else {
-            None
-        };
+        input.parse::<Token![=]>()?;
 
-        Ok(Self { name, ty })
+        let callback: Path = input.parse()?;
+
+        Ok(Self { callback })
     }
 }
 
-fn get_listeners(fields: Fields) -> Vec<(Field, ListenerAttr)> {
+fn listener_arg_type(ty: &Type) -> syn::Result<Option<Type>>  {
+    let Type::Path(TypePath { path, .. }) = ty else {
+        return Err(syn::Error::new_spanned(ty,"expected Listener<T>"))
+    };
+
+    let segment = path
+        .segments
+        .last()
+        .ok_or_else(|| syn::Error::new_spanned(ty, "invalid type"))?;
+
+    if segment.ident != "Listener" {
+        return Err(syn::Error::new_spanned(&segment.ident, "expected Listener"));
+    }
+
+    match &segment.arguments {
+        PathArguments::None => {
+            // Listener -> default to ()
+            Ok(None)
+        }
+        PathArguments::AngleBracketed(args) => {
+            if let Some(GenericArgument::Type(ty)) = args.args.first() {
+                Ok(Some(ty.clone()))
+            } else {
+                Err(syn::Error::new_spanned(args, "expected Listener<T>"))
+            }
+        }
+        _ => Err(syn::Error::new_spanned(segment, "unsupported Listener type")),
+    }
+}
+
+fn get_listeners(fields: Fields) -> syn::Result<Vec<(Field, Callback, Option<Type>)>> {
     let mut res = Vec::new();
 
     for field in fields {
         if let Some(attr) = field.attrs.iter().find(|a| a.path().is_ident("listener")) {
-            let listener = attr.parse_args::<ListenerAttr>().unwrap();
-            res.push((field, listener));
+            let listener = attr.parse_args::<Callback>()?;
+            let arg_type = listener_arg_type(&field.ty)?;
+            res.push((field, listener, arg_type));
         }
     }
 
-    res
+    Ok(res)
 }
 
 fn trampoline_name(field_name: &Ident, struct_name: &Ident) -> Ident {
@@ -144,21 +172,20 @@ fn trampoline_name(field_name: &Ident, struct_name: &Ident) -> Ident {
     )
 }
 
-fn create_trampoline(struct_name: &Ident, field_name: &Ident, listener: &ListenerAttr) -> impl ToTokens + use<> {
-    let cb_ident = Ident::new(&listener.name.value(), listener.name.span());
+fn create_trampoline(struct_name: &Ident, field_name: &Ident, listener: &Callback, arg_type: &Option<Type>) -> impl ToTokens + use<> {
+    let cb_ident = listener.callback.get_ident().unwrap();
 
     let trampoline_name = trampoline_name(field_name, struct_name);
 
-    let func_call = if let Some(ty_path) = &listener.ty {
-        quote! {
+    let func_call = match arg_type {
+        Some(ty) => quote! {
             //let data_mut_ref = ;
             //(*this).#cb_ident(data_mut_ref)
-            #cb_ident(::std::pin::Pin::new_unchecked((data as *mut #ty_path).as_mut().unwrap()))
-        }
-    } else {
-        quote! {
+            #cb_ident(::std::pin::Pin::new_unchecked((data as *mut #ty).as_mut().unwrap()))
+        },
+        None => quote! {
             #cb_ident()
-        }
+        },
     };
 
     quote! {
@@ -203,6 +230,13 @@ fn create_init(struct_name: &Ident, field_name: &Ident) -> impl ToTokens + use<>
     }
 }
 
+fn is_listener(ty: &Type) -> bool {
+    if let Type::Path(TypePath { path, .. }) = ty && let Some(segment) = path.segments.last() {
+        return segment.ident == "Listener";
+    }
+    false
+}
+
 #[proc_macro_derive(WlListeners, attributes(listener))]
 pub fn derive_wl_listeners(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -225,21 +259,23 @@ pub fn derive_wl_listeners(input: TokenStream) -> TokenStream {
     let mut inits = Vec::new();
     let mut init_calls = Vec::new();
 
-    for (field, listener) in get_listeners(fields) {
+    let listeners = match get_listeners(fields) {
+        Ok(v) => v,
+        Err(e) => return e.into_compile_error().into()
+    };
+
+    for (field, listener, arg_type) in listeners {
         let field_name = &field.ident.unwrap();
         let field_ty = &field.ty;
 
         // check if field type is listener
-        if match field_ty {
-            Type::Path(path) => !path.path.is_ident("Listener"),
-            _ => true,
-        } {
+        if !is_listener(field_ty) {
             return syn::Error::new_spanned(field_ty, "listener attribute are only for fields of Listener type")
                 .into_compile_error()
                 .into();
         }
 
-        trampolines.push(create_trampoline(struct_name, field_name, &listener));
+        trampolines.push(create_trampoline(struct_name, field_name, &listener, &arg_type));
 
         init_calls.push(init_name(field_name));
         inits.push(create_init(struct_name, field_name));
@@ -299,7 +335,9 @@ pub fn c_ptr(attr: TokenStream, item: TokenStream) -> TokenStream {
     let c_type = parse_macro_input!(attr as Path);
     let input = parse_macro_input!(item as DeriveInput);
 
+    let generics = &input.generics;
     let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     if !has_repr_c(&input.attrs) {
         return syn::Error::new_spanned(&input, "c_ptr can only be used with repr(\"C\")").into_compile_error().into();
@@ -308,16 +346,16 @@ pub fn c_ptr(attr: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #input
 
-        impl #name {
+        impl #impl_generics #name #ty_generics #where_clause {
             /// # Safety
             /// the pointer must be valid for mutable access
-            pub unsafe fn from_ptr<'a>(ptr: ::std::ptr::NonNull<#c_type>) -> &'a mut #name {
-                let ptr = ptr.as_ptr() as *mut #name;
-                &mut *ptr
+            pub unsafe fn from_ptr<'a>(ptr: ::std::ptr::NonNull<#c_type>) -> &'a mut Self {
+                let ptr = ptr.as_ptr() as *mut #name #ty_generics;
+                ptr.as_mut().unwrap()
             }
 
             pub fn as_ptr(&mut self) -> *mut #c_type {
-                (self as *mut #name) as *mut #c_type
+                (self as *mut Self) as *mut #c_type
             }
         }
     }

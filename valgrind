@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 
-cargo test --no-run --message-format=json "${*}" \
+cargo test --no-run --message-format=json ${*} \
     | jq -r "select(.profile.test == true) | .executable" \
     | while read bin; do \
         echo "Running valgrind on $bin"; \

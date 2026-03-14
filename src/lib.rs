@@ -48,15 +48,15 @@ mod tests {
     struct ListenerTest {
         num_a: u32,
         num_b: u32,
-        #[listener("with_data_test_cb", Data)]
+        #[listener(callback = with_data_test_cb)]
         #[pin]
-        with_data_test: Listener,
+        with_data_test: Listener<Data>,
 
-        #[listener("without_data_test_cb")]
+        #[listener(callback = without_data_test_cb)]
         #[pin]
         without_data_test: Listener,
 
-        #[listener("destroy_cb")]
+        #[listener(callback = destroy_cb)]
         #[pin]
         destroy: Listener,
 
@@ -145,7 +145,7 @@ mod tests {
     fn trampoline_with_data() {
         let mut lt = Box::pin(MaybeUninit::uninit());
         let mut lt = ListenerTest::initialize(lt.as_mut());
-        let mut signal = pin!(Signal::empty());
+        let mut signal = pin!(Signal::<Data>::empty());
         signal.as_mut().init();
         signal.as_mut().add(lt.as_mut().project().with_data_test);
 

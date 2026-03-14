@@ -1,14 +1,15 @@
 use std::{error::Error, mem::MaybeUninit};
 
+use std::pin::pin;
+
 use wlz::{wlz::WlzServer, wrapper::log};
 
 fn main() -> Result<(), Box<dyn Error>> {
     log::init(log::LogLevel::Debug);
 
-    let mut server = Box::pin(MaybeUninit::uninit());
-    let server = WlzServer::initialize(server.as_mut())?;
-    // Todo: maybe only work on Pin<&mut WlzServer> to run and so on?
-    //let _server = unsafe { server.as_mut().get_unchecked_mut() };
+    // use pin!() for having it on stack and Box::pin for being on heap
+    let mut server = pin!(MaybeUninit::uninit());
+    let _server = WlzServer::initialize(server.as_mut())?;
 
     Ok(())
 }
