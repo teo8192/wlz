@@ -38,7 +38,7 @@ impl Backend {
 
     pub fn new_output_event(&mut self) -> Pin<&mut Signal<Output>> {
         unsafe {
-            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| {
+            Signal::get_event_mut(Pin::new_unchecked(self.as_mut()), |v| {
                 &mut v.events.new_output
             })
         }
@@ -343,7 +343,7 @@ impl XdgShell {
 
     pub fn new_toplevel_event(&mut self) -> Pin<&mut Signal<XdgToplevel>> {
         unsafe {
-            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| {
+            Signal::get_event_mut(Pin::new_unchecked(self.as_mut()), |v| {
                 &mut v.events.new_toplevel
             })
         }
@@ -351,7 +351,7 @@ impl XdgShell {
 
     pub fn new_popup_event(&mut self) -> Pin<&mut Signal<XdgPopup>> {
         unsafe {
-            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| {
+            Signal::get_event_mut(Pin::new_unchecked(self.as_mut()), |v| {
                 &mut v.events.new_popup
             })
         }

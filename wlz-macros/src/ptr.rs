@@ -68,12 +68,11 @@ pub(crate) fn derive_ptr_wrapper(input: TokenStream) -> TokenStream {
             }
 
             pub fn as_ref<'a>(&self) -> &'a #inner_ty {
-                let ptr = self.0.as_ptr();
-                unsafe { &*self.0.as_ptr() }
+                unsafe { self.0.as_ptr().as_ref().unwrap() }
             }
 
-            pub fn as_ref_mut<'a>(&mut self) -> &'a mut #inner_ty {
-                unsafe { &mut *self.0.as_ptr() }
+            pub fn as_mut<'a>(&mut self) -> &'a mut #inner_ty {
+                unsafe { self.0.as_ptr().as_mut().unwrap() }
             }
 
             /// # Safety
@@ -207,7 +206,7 @@ pub(crate) fn from_ptr(input: TokenStream) -> TokenStream {
             pub unsafe fn from_ptr<'a>(ptr: ::std::ptr::NonNull<#field_ty>) -> &'a mut #name {
                 let offset = ::memoffset::offset_of!(#name, 0);
                 let ptr = (ptr.as_ptr() as *mut u8).wrapping_sub(offset) as *mut #name;
-                &mut *ptr
+                ptr.as_mut().unwrap()
             }
 
             /// Get a pointer to the first element
