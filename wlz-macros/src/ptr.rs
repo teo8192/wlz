@@ -95,6 +95,12 @@ pub(crate) fn derive_ptr_wrapper(input: TokenStream) -> TokenStream {
                 ::std::ptr::NonNull::new(value).map(Self).ok_or(())
             }
         }
+
+        impl ::core::convert::From<NonNull<#inner_ty>> for #name {
+            fn from(value: NonNull<#inner_ty>) -> Self {
+                Self(value)
+            }
+        }
     }
     .into()
 }

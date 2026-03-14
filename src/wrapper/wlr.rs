@@ -421,4 +421,69 @@ impl XCursorManager {
 pub struct XdgToplevel(ffi::wlr_xdg_toplevel);
 
 #[derive(FromPtr)]
-pub struct XdgPopup(ffi::wlr_xdg_popup);
+pub struct XdgPopup(ffi::wlr_xdg_popup, PhantomPinned);
+
+impl XdgPopup {
+    pub fn destroy_event(&mut self) -> Pin<&mut Signal> {
+        // SAFETY: This is safe since the interior does not move out of the reference,
+        // and the returned value does not move since it is a field of the pinned value
+        unsafe { Signal::get_event_mut(Pin::new_unchecked(self), |v| &mut v.0.events.destroy) }
+    }
+
+    pub fn parent(self: Pin<&mut XdgPopup>) -> Option<Surface> {
+        self.0.parent.try_into().ok()
+    }
+
+    pub fn base(self: Pin<&mut XdgPopup>) -> Option<XdgSurface> {
+        self.0.base.try_into().ok()
+    }
+}
+
+#[derive(PtrWrapper)]
+pub struct Surface(NonNull<ffi::wlr_surface>);
+
+impl Surface {
+    pub fn data<T>(&self) -> Option<NonNull<T>> {
+        NonNull::new(self.as_ref().data as *mut T)
+    }
+
+    pub fn commit_event(&mut self) -> Pin<&mut Signal> {
+        unsafe {
+            Signal::get_event_mut(Pin::new_unchecked(self), |v| {
+                &mut v.0.as_mut().events.commit
+            })
+        }
+    }
+}
+
+#[derive(PtrWrapper)]
+pub struct SceneTree(NonNull<ffi::wlr_scene_tree>);
+
+impl SceneTree {
+    /// Add a node displaying an xdg_surface and all of its sub-surfaces to the
+    /// scene-graph.
+    ///
+    /// The origin of the returned scene-graph node will match the top-left corner
+    /// of the xdg_surface window geometry.
+    pub fn xdg_surface_create(&mut self, xdg_surface: XdgSurface) -> Option<Self> {
+        unsafe { ffi::wlr_scene_xdg_surface_create(self.as_ptr(), xdg_surface.as_ptr()) }
+            .try_into()
+            .ok()
+    }
+}
+
+#[derive(PtrWrapper)]
+/// An xdg-surface is a user interface element requiring management by the
+/// compositor. An xdg-surface alone isn't useful, a role should be assigned to
+/// it in order to map it.
+pub struct XdgSurface(NonNull<ffi::wlr_xdg_surface>);
+
+impl XdgSurface {
+    pub fn set_data<T>(&mut self, data: &mut T) {
+        self.as_mut().data = data as *mut T as *mut std::os::raw::c_void;
+    }
+
+    pub fn surface(&mut self) -> Surface {
+        unsafe { self.0.as_mut() }.surface.try_into().unwrap()
+    }
+}

@@ -9,8 +9,8 @@ use wlz_macros::{initialization, WlListeners};
 use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
     Allocator, Backend, Compositor, Cursor, DataDeviceManager, Output, OutputLayout, OutputState,
-    Renderer, Scene, SceneOutputLayout, SubCompositor, XCursorManager, XdgPopup, XdgShell,
-    XdgToplevel,
+    Renderer, Scene, SceneOutputLayout, SceneTree, SubCompositor, XCursorManager, XdgPopup,
+    XdgShell, XdgToplevel,
 };
 use crate::wrapper::WrapperError;
 use crate::{destroy_object, error};
@@ -237,12 +237,44 @@ impl WlzServer {
         mem::forget(pinned_box);
     }
 
+	/// This event is raised when a client creates a new toplevel (application window).
     fn new_xdg_toplevel(self: Pin<&mut Self>, _xdg_toplevel: Pin<&mut XdgToplevel>) {
         unimplemented!()
     }
 
-    fn new_xdg_popup(self: Pin<&mut Self>, _xdg_popup: Pin<&mut XdgPopup>) {
-        unimplemented!()
+    /// This event is raised when a client creates a new popup.
+    fn new_xdg_popup(self: Pin<&mut Self>, mut xdg_popup: Pin<&mut XdgPopup>) {
+        let mut pinned_box = Box::pin(MaybeUninit::uninit());
+        let output = WlzPopup::initialize(pinned_box.as_mut(), unsafe {
+            xdg_popup.as_mut().get_unchecked_mut()
+        });
+
+        /* We must add xdg popups to the scene graph so they get rendered. The
+         * wlroots scene graph provides a helper for this, but to use it we must
+         * provide the proper parent scene node of the xdg popup. To enable this,
+         * we always set the user data field of xdg_surfaces to the corresponding
+         * scene node. */
+        let parent = xdg_popup.as_mut().parent().expect("XdgPopup had no parent");
+        let mut parent_tree: SceneTree = parent.data().unwrap().into();
+        let mut new_xdg_surface = parent_tree
+            .xdg_surface_create(xdg_popup.as_mut().base().unwrap())
+            .unwrap();
+        xdg_popup
+            .as_mut()
+            .base()
+            .unwrap()
+            .set_data(new_xdg_surface.as_mut());
+
+        xdg_popup
+            .as_mut()
+            .base()
+            .unwrap()
+            .surface()
+            .commit_event()
+            .add(output.project().commit);
+
+        // forget the memory, it is deallocated when destroy signal is received
+        mem::forget(pinned_box);
     }
 
     /*pub fn display(&self) -> &Display {
@@ -271,8 +303,8 @@ struct WlzOutput {
 impl WlzOutput {
     #[initialization]
     fn init(self: &mut Pin<&mut Self>, server: &mut WlzServer, output: &mut Output) {
-        *self.as_mut().project().server = NonNull::new(server as *mut WlzServer).unwrap();
-        *self.as_mut().project().output = NonNull::new(output as *mut Output).unwrap();
+        *self.as_mut().project().server = NonNull::from_mut(server);
+        *self.as_mut().project().output = NonNull::from_mut(output);
     }
 
     fn destroy(self: Pin<&mut Self>) {
@@ -285,5 +317,37 @@ impl WlzOutput {
 
     fn request_state(self: Pin<&mut Self>) {
         todo!()
+    }
+}
+
+#[derive(WlListeners)]
+#[pin_project]
+struct WlzPopup {
+    #[pin]
+    xdg_popup: NonNull<XdgPopup>,
+
+    #[pin]
+    #[listener(callback = commit)]
+    commit: Listener,
+
+    #[pin]
+    #[listener(callback = destroy)]
+    destroy: Listener,
+}
+
+impl WlzPopup {
+    #[initialization]
+    fn init(self: &mut Pin<&mut Self>, popup: &mut XdgPopup) {
+        let mut this = self.as_mut().project();
+
+        popup.destroy_event().add(this.destroy);
+
+        *this.xdg_popup = NonNull::from_mut(popup);
+    }
+
+    fn commit(self: Pin<&mut Self>) {}
+
+    fn destroy(self: Pin<&mut Self>) {
+        unsafe { destroy_object(self) };
     }
 }
