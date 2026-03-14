@@ -129,6 +129,10 @@ impl List {
             )
         };
     }
+
+    pub fn remove(self: Pin<&mut Self>) {
+        unsafe { ffi::wl_list_remove(self.get_unchecked_mut().as_ptr()) };
+    }
 }
 
 #[c_ptr(ffi::wl_signal)]

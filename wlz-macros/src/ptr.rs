@@ -82,6 +82,12 @@ pub(crate) fn derive_ptr_wrapper(input: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::core::convert::From<&mut #inner_ty> for #name {
+            fn from(value: &mut #inner_ty) -> Self {
+                Self(::std::ptr::NonNull::from_mut(value))
+            }
+        }
+
         impl ::core::convert::From<&#name> for *mut #inner_ty {
             fn from(value: &#name) -> *mut #inner_ty {
                 value.0.as_ptr()
@@ -160,8 +166,14 @@ pub(crate) fn c_ptr(attr: TokenStream, item: TokenStream) -> TokenStream {
             /// # Safety
             /// the pointer must be valid for mutable access
             pub unsafe fn from_ptr<'a>(ptr: ::std::ptr::NonNull<#c_type>) -> &'a mut Self {
-                let ptr = ptr.as_ptr() as *mut #name #ty_generics;
-                ptr.as_mut().unwrap()
+                Self::try_from_ptr(ptr.as_ptr()).unwrap()
+            }
+
+            /// # Safety
+            /// the pointer must be valid for mutable access
+            pub unsafe fn try_from_ptr<'a>(ptr: *mut #c_type) -> Option<&'a mut Self> {
+                let ptr = ptr as *mut #name #ty_generics;
+                ptr.as_mut()
             }
 
             pub fn as_ptr(&mut self) -> *mut #c_type {

@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use syn::{
-    Data, DeriveInput, Field, Fields, FnArg, GenericArgument, Ident, Item, Pat, Path, PathArguments, Receiver, ReturnType, Token, Type, TypePath, parse::{Parse, ParseStream}, parse_macro_input, spanned::Spanned
+    Data, DeriveInput, Field, Fields, FnArg, GenericArgument, Ident, Item, Pat, Path, PathArguments, ReturnType, Token, Type, TypePath, parse::{Parse, ParseStream}, parse_macro_input, spanned::Spanned
 };
 use heck::ToSnakeCase;
 
@@ -83,8 +83,6 @@ fn create_trampoline(struct_name: &Ident, field_name: &Ident, listener: &Callbac
 
     let func_call = match arg_type {
         Some(ty) => quote! {
-            //let data_mut_ref = ;
-            //(*this).#cb_ident(data_mut_ref)
             #cb_ident(::std::pin::Pin::new_unchecked((data as *mut #ty).as_mut().unwrap()))
         },
         None => quote! {
@@ -128,17 +126,8 @@ fn create_init(struct_name: &Ident, field_name: &Ident) -> impl ToTokens + use<>
         /// In place initialization
         fn #init_name(mut self: ::std::pin::Pin<&mut Self>) {
             self.project().#field_name.init(Self::#trampoline_name);
-            //let listener = unsafe { self.map_unchecked_mut(|paren| paren.#field_name) };
-            //listener.init(Self::#trampoline_name);
         }
     }
-}
-
-fn is_listener(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty && let Some(segment) = path.segments.last() {
-        return segment.ident == "Listener";
-    }
-    false
 }
 
 // #[proc_macro_derive(WlListeners, attributes(listener))]
@@ -170,17 +159,8 @@ pub(crate) fn derive_wl_listeners(input: TokenStream) -> TokenStream {
 
     for (field, listener, arg_type) in listeners {
         let field_name = &field.ident.unwrap();
-        let field_ty = &field.ty;
-
-        // check if field type is listener
-        if !is_listener(field_ty) {
-            return syn::Error::new_spanned(field_ty, "listener attribute are only for fields of Listener type")
-                .into_compile_error()
-                .into();
-        }
 
         trampolines.push(create_trampoline(struct_name, field_name, &listener, &arg_type));
-
         init_calls.push(init_name(field_name));
         inits.push(create_init(struct_name, field_name));
     }
@@ -224,10 +204,10 @@ pub(crate) fn initialization(attr: TokenStream, item: TokenStream) -> TokenStrea
     let fn_name = &sig.ident;
 
     // make sure &mut self
-    match sig.inputs.first() {
+    // TODO: Better check possibly? The initializer accepts a lot of shit now i guess
+    /*match sig.inputs.first() {
         Some(FnArg::Receiver(Receiver {
             reference: None,
-            mutability: None,
             colon_token: Some(_),
             ty: _ty,
             ..
@@ -239,7 +219,7 @@ pub(crate) fn initialization(attr: TokenStream, item: TokenStream) -> TokenStrea
                 .to_compile_error()
                 .into();
         }
-    }
+    }*/
 
     let args: Vec<_> = sig.inputs.iter().skip(1).collect();
     let arg_idents: Vec<_> = args.iter().map(|arg| {
@@ -316,14 +296,16 @@ pub(crate) fn initialization(attr: TokenStream, item: TokenStream) -> TokenStrea
 
     let ret_kind = classify_return(ret);
 
+    let lifetime_name = quote! {'__lifetime};
+
     let ret_type = match ret_kind {
         ReturnKind::Result => {
             let (_ok, err) = extract_result(get_return_type(ret)).unwrap();
             // TODO make sure ok is ()
-            quote! { Result<::std::pin::Pin<&'a mut Self>, #err> }
+            quote! { Result<::std::pin::Pin<&#lifetime_name mut Self>, #err> }
         },
-        ReturnKind::Option => quote! { Option<::std::pin::Pin<&'a mut Self>> },
-        ReturnKind::Plain => quote! { ::std::pin::Pin<&'a mut Self> },
+        ReturnKind::Option => quote! { Option<::std::pin::Pin<&#lifetime_name mut Self>> },
+        ReturnKind::Plain => quote! { ::std::pin::Pin<&#lifetime_name mut Self> },
         ReturnKind::Unknown => {
             return syn::Error::new(ret.span(), "must either be Result<(), T>, Option<()> or ()")
                 .to_compile_error()
@@ -353,11 +335,11 @@ pub(crate) fn initialization(attr: TokenStream, item: TokenStream) -> TokenStrea
         #func
 
         /// In place initialization
-        #vis fn initialize<'a>(mut uninit: ::std::pin::Pin<&'a mut ::std::mem::MaybeUninit<Self>> #(, #args)*) -> #ret_type {
+        #vis fn initialize<#lifetime_name>(mut uninit: ::std::pin::Pin<&#lifetime_name  mut ::std::mem::MaybeUninit<Self>> #(, #args)*) -> #ret_type {
             let mut this = unsafe { uninit.map_unchecked_mut(|v| v.assume_init_mut()) };
 
             this.as_mut().__initialize_callbacks();
-            #result_storage this.#fn_name(#(#arg_idents),*);
+            #result_storage this.as_mut().#fn_name(#(#arg_idents),*);
 
             #result_handler
         }

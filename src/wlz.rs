@@ -1,6 +1,5 @@
 use std::mem::{self, MaybeUninit};
 use std::pin::Pin;
-use std::ptr::NonNull;
 use std::{error::Error, fmt};
 
 use pin_project::pin_project;
@@ -8,9 +7,9 @@ use wlz_macros::{initialization, WlListeners};
 
 use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
-    Allocator, Backend, Compositor, Cursor, DataDeviceManager, Output, OutputLayout, OutputState,
-    Renderer, Scene, SceneOutputLayout, SceneTree, SubCompositor, XCursorManager, XdgPopup,
-    XdgShell, XdgToplevel,
+    Allocator, Backend, Compositor, Cursor, DataDeviceManager, DataField, Output, OutputLayout,
+    OutputState, Renderer, Scene, SceneOutputLayout, SceneTree, SubCompositor, XCursorManager,
+    XdgPopup, XdgShell, XdgToplevel,
 };
 use crate::wrapper::WrapperError;
 use crate::{destroy_object, error};
@@ -71,7 +70,7 @@ pub struct WlzServer {
 
 impl WlzServer {
     #[initialization]
-    pub fn init(self: &mut Pin<&mut Self>) -> Result<(), Box<dyn Error>> {
+    pub fn init(mut self: Pin<&mut Self>) -> Result<(), Box<dyn Error>> {
         let this = self.as_mut().project();
         /* The Wayland display is managed by libwayland. It handles accepting
          * clients from the Unix socket, manging Wayland globals, and so on. */
@@ -184,34 +183,16 @@ impl WlzServer {
 
         /* Allocates and configures our state for this output */
         let mut pinned_box = Box::pin(MaybeUninit::uninit());
-        let mut output = WlzOutput::initialize(
-            pinned_box.as_mut(),
-            unsafe { self.as_mut().get_unchecked_mut() },
-            unsafe { wlr_output.as_mut().get_unchecked_mut() },
-        );
-        // reborrow this again
-        let this = self.as_mut().project();
-        //let output = unsafe { output.get_unchecked_mut() };
+        let mut output =
+            WlzOutput::initialize(pinned_box.as_mut(), self.as_mut(), wlr_output.as_mut());
 
-        /* Sets up a listener for the frame event. */
-        wlr_output
-            .as_mut()
-            .frame_event()
-            .add(output.as_mut().project().frame);
+        // reborrow these again
+        let output = output.as_mut().project();
+        let this = output.server.as_mut().project();
+        let wlr_output = output.output;
 
-        /* Sets up a listener for the state request event. */
-        wlr_output
-            .as_mut()
-            .request_state_event()
-            .add(output.as_mut().project().request_state);
-
-        /* Sets up a listener for the destroy event. */
-        wlr_output
-            .as_mut()
-            .destroy_event()
-            .add(output.as_mut().project().destroy);
-
-        this.outputs.insert(output.project().link);
+        // insert the output into our list of outputs
+        this.outputs.insert(output.link);
 
         /* Adds this to the output layout. The add_auto function arranges outputs
          * from left-to-right in the order they appear. A more sophisticated
@@ -225,7 +206,7 @@ impl WlzServer {
         if let Err(e) = (|| {
             let mut l_output = this.output_layout.add_auto(wlr_output.as_mut())?;
 
-            let mut scene_output = this.scene.output_create(wlr_output)?;
+            let mut scene_output = this.scene.output_create(wlr_output.as_mut())?;
             this.scene_layout
                 .add_output(&mut l_output, &mut scene_output);
             Ok::<(), WrapperError>(())
@@ -238,32 +219,39 @@ impl WlzServer {
     }
 
     /// This event is raised when a client creates a new toplevel (application window).
-    fn new_xdg_toplevel(self: Pin<&mut Self>, _xdg_toplevel: Pin<&mut XdgToplevel>) {
-        unimplemented!()
+    fn new_xdg_toplevel(self: Pin<&mut Self>, xdg_toplevel: Pin<&mut XdgToplevel>) {
+        /* Allocate a WlzToplevel for this surface */
+
+        let mut pinned_box = Box::pin(MaybeUninit::uninit());
+        WlzToplevel::initialize(pinned_box.as_mut(), self, xdg_toplevel);
+
+        mem::forget(pinned_box);
     }
 
     /// This event is raised when a client creates a new popup.
     fn new_xdg_popup(self: Pin<&mut Self>, mut xdg_popup: Pin<&mut XdgPopup>) {
         let mut pinned_box = Box::pin(MaybeUninit::uninit());
-        let output = WlzPopup::initialize(pinned_box.as_mut(), unsafe {
-            xdg_popup.as_mut().get_unchecked_mut()
-        });
+        let mut popup = WlzPopup::initialize(pinned_box.as_mut(), xdg_popup.as_mut());
+
+        let popup = popup.as_mut().project();
+
+        let mut xdg_popup = popup.xdg_popup.as_mut();
 
         /* We must add xdg popups to the scene graph so they get rendered. The
          * wlroots scene graph provides a helper for this, but to use it we must
          * provide the proper parent scene node of the xdg popup. To enable this,
          * we always set the user data field of xdg_surfaces to the corresponding
          * scene node. */
-        let parent = xdg_popup.as_mut().parent().expect("XdgPopup had no parent");
-        let mut parent_tree: SceneTree = parent.data().unwrap().into();
-        let mut new_xdg_surface = parent_tree
+        let mut parent = xdg_popup.as_mut().parent().expect("XdgPopup had no parent");
+        let parent_tree = parent.data::<SceneTree>().unwrap();
+        let new_xdg_surface = parent_tree
             .xdg_surface_create(xdg_popup.as_mut().base().unwrap())
             .unwrap();
         xdg_popup
             .as_mut()
             .base()
             .unwrap()
-            .set_data(new_xdg_surface.as_mut());
+            .set_data(new_xdg_surface.as_ref());
 
         xdg_popup
             .as_mut()
@@ -271,7 +259,7 @@ impl WlzServer {
             .unwrap()
             .surface()
             .commit_event()
-            .add(output.project().commit);
+            .add(popup.commit);
 
         // forget the memory, it is deallocated when destroy signal is received
         mem::forget(pinned_box);
@@ -284,11 +272,11 @@ impl WlzServer {
 
 #[derive(WlListeners)]
 #[pin_project]
-struct WlzOutput {
+struct WlzOutput<'a, 'b> {
     #[pin]
     link: List,
-    server: NonNull<WlzServer>,
-    output: NonNull<Output>,
+    server: Pin<&'a mut WlzServer>,
+    output: Pin<&'b mut Output>,
     #[pin]
     #[listener(callback = frame)]
     frame: Listener,
@@ -300,11 +288,24 @@ struct WlzOutput {
     destroy: Listener,
 }
 
-impl WlzOutput {
+impl<'a, 'b> WlzOutput<'a, 'b> {
     #[initialization]
-    fn init(self: &mut Pin<&mut Self>, server: &mut WlzServer, output: &mut Output) {
-        *self.as_mut().project().server = NonNull::from_mut(server);
-        *self.as_mut().project().output = NonNull::from_mut(output);
+    fn init(mut self: Pin<&mut Self>, server: Pin<&'a mut WlzServer>, output: Pin<&'b mut Output>) {
+        let this = self.as_mut().project();
+        *this.server = server;
+        *this.output = output;
+
+        /* Sets up a listener for the frame event. */
+        this.output.as_mut().frame_event().add(this.frame);
+
+        /* Sets up a listener for the state request event. */
+        this.output
+            .as_mut()
+            .request_state_event()
+            .add(this.request_state);
+
+        /* Sets up a listener for the destroy event. */
+        this.output.as_mut().destroy_event().add(this.destroy);
     }
 
     fn destroy(self: Pin<&mut Self>) {
@@ -322,9 +323,8 @@ impl WlzOutput {
 
 #[derive(WlListeners)]
 #[pin_project]
-struct WlzPopup {
-    #[pin]
-    xdg_popup: NonNull<XdgPopup>,
+struct WlzPopup<'a> {
+    xdg_popup: Pin<&'a mut XdgPopup>,
 
     #[pin]
     #[listener(callback = commit)]
@@ -335,17 +335,18 @@ struct WlzPopup {
     destroy: Listener,
 }
 
-impl WlzPopup {
+impl<'a> WlzPopup<'a> {
     #[initialization]
-    fn init(self: &mut Pin<&mut Self>, popup: &mut XdgPopup) {
-        let mut this = self.as_mut().project();
+    fn init(mut self: Pin<&mut Self>, popup: Pin<&'a mut XdgPopup>) {
+        let this = self.as_mut().project();
+        *this.xdg_popup = popup;
 
-        popup.destroy_event().add(this.destroy);
-
-        *this.xdg_popup = NonNull::from_mut(popup);
+        this.xdg_popup.as_mut().destroy_event().add(this.destroy);
     }
 
-    fn commit(self: Pin<&mut Self>) {}
+    fn commit(self: Pin<&mut Self>) {
+        todo!()
+    }
 
     fn destroy(self: Pin<&mut Self>) {
         unsafe { destroy_object(self) };
@@ -354,11 +355,12 @@ impl WlzPopup {
 
 #[derive(WlListeners)]
 #[pin_project]
-struct WlzToplevel {
+struct WlzToplevel<'a, 'b, 'c> {
+    #[pin]
     link: List,
-    server: NonNull<WlzServer>,
-    xdg_toplevel: XdgToplevel,
-    scene_tree: SceneTree,
+    server: Pin<&'a mut WlzServer>,
+    xdg_toplevel: Pin<&'b mut XdgToplevel>,
+    scene_tree: Pin<&'c mut SceneTree>,
     #[pin]
     #[listener(callback = map)]
     map: Listener,
@@ -385,22 +387,93 @@ struct WlzToplevel {
     request_fullscreen: Listener,
 }
 
-impl WlzToplevel {
+impl<'a, 'b, 'c> WlzToplevel<'a, 'b, 'c>
+where
+    'b: 'c,
+{
     #[initialization]
-    fn init(self: &mut Pin<&mut Self>, server: &mut WlzServer) {
-        *self.as_mut().project().server = NonNull::from_mut(server);
+    fn init(
+        mut self: Pin<&mut Self>,
+        server: Pin<&'a mut WlzServer>,
+        xdg_toplevel: Pin<&'b mut XdgToplevel>,
+    ) {
+        let self_ptr = self.as_ref().get_ref() as *const Self;
+        let this = self.as_mut().project();
+        *this.server = server;
+        *this.xdg_toplevel = xdg_toplevel;
+
+        *this.scene_tree = this
+            .server
+            .as_mut()
+            .project()
+            .scene
+            .tree()
+            .xdg_surface_create(this.xdg_toplevel.as_mut().base())
+            .unwrap();
+
+        this.scene_tree
+            .as_mut()
+            .project()
+            .node
+            .pin_set_data_ptr(self_ptr);
+
+        this.xdg_toplevel
+            .as_mut()
+            .base()
+            .set_data(this.scene_tree.as_ref());
+
+        /* Listen to the various events it can emit */
+        let mut surface = this.xdg_toplevel.as_mut().base().surface();
+        surface.map_event().add(this.map);
+        surface.unmap_event().add(this.unmap);
+        surface.unmap_event().add(this.commit);
+
+        this.xdg_toplevel.as_mut().destroy_event().add(this.destroy);
+        this.xdg_toplevel
+            .as_mut()
+            .request_move_event()
+            .add(this.request_move);
+        this.xdg_toplevel
+            .as_mut()
+            .request_resize_event()
+            .add(this.request_resize);
+        this.xdg_toplevel
+            .as_mut()
+            .request_maximize_event()
+            .add(this.request_maximize);
+        this.xdg_toplevel
+            .as_mut()
+            .request_fullscreen_event()
+            .add(this.request_fullscreen);
+    }
+
+    fn focus(self: Pin<&mut Self>) {
+        todo!()
     }
 
     fn destroy(self: Pin<&mut Self>) {
         unsafe { destroy_object(self) };
     }
 
-    fn map(self: Pin<&mut Self>) {
-        todo!()
+    /// Called when the surface is mapped, or ready to display on-screen.
+    fn map(mut self: Pin<&mut Self>) {
+        let this = self.as_mut().project();
+
+        this.server.as_mut().project().toplevels.insert(this.link);
+
+        self.focus();
     }
 
+    /// Called when the surface is unmapped, and should no longer be shown.
     fn unmap(self: Pin<&mut Self>) {
-        todo!()
+        /* Reset the cursor mode if the grabbed toplevel was unmapped. */
+        todo!();
+        /*if (toplevel == toplevel->server->grabbed_toplevel) {
+            reset_cursor_mode(toplevel->server);
+        }*/
+
+        #[allow(unreachable_code)]
+        self.project().link.remove()
     }
 
     fn commit(self: Pin<&mut Self>) {
