@@ -161,7 +161,9 @@ impl WlzServer {
         let this = self.as_mut().project();
         /* Configures the output created by the backend to use our allocator
          * and our renderer. Must be done once, before commiting the output */
-        wlr_output.init_renderer(this.allocator, this.renderer);
+        wlr_output
+            .as_mut()
+            .init_renderer(this.allocator, this.renderer);
 
         /* The output may be disabled, switch it on. */
         let mut state = OutputState::new();
@@ -172,12 +174,12 @@ impl WlzServer {
          * refresh rate), and each monitor supports only a specific set of modes. We
          * just pick the monitor's preferred mode, a more sophisticated compositor
          * would let the user configure it. */
-        if let Some(mode) = wlr_output.preferred_mode() {
+        if let Some(mode) = wlr_output.as_mut().preferred_mode() {
             state.set_mode(mode)
         }
 
         /* Atomically applies the new output state. */
-        wlr_output.commit_state(&mut state);
+        wlr_output.as_mut().commit_state(&mut state);
         state.finish();
 
         /* Allocates and configures our state for this output */

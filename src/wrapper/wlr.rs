@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::ffi::CString;
+use std::marker::PhantomPinned;
 use std::mem::zeroed;
 use std::pin::Pin;
 use std::ptr::{null, null_mut, NonNull};
@@ -171,7 +172,7 @@ pub struct OutputLayoutOutput(NonNull<ffi::wlr_output_layout_output>);
 /// perform rendering on that render pass, and finally call
 /// wlr_output_commit_state()."]
 #[derive(FromPtr)]
-pub struct Output(ffi::wlr_output);
+pub struct Output(ffi::wlr_output, PhantomPinned);
 
 impl Output {
     /// Initialize the output's rendering subsystem with the provided allocator and
@@ -183,16 +184,20 @@ impl Output {
     ///
     /// The buffer capabilities of the provided must match the capabilities of the
     /// output's backend. Returns false otherwise.
-    pub fn init_renderer(&mut self, allocator: &mut Allocator, renderer: &mut Renderer) {
+    pub fn init_renderer(self: Pin<&mut Self>, allocator: &mut Allocator, renderer: &mut Renderer) {
         // TODO: handle error
         unsafe {
-            ffi::wlr_output_init_render(self.as_ptr(), allocator.as_ptr(), renderer.as_ptr())
+            ffi::wlr_output_init_render(
+                self.get_unchecked_mut().as_ptr(),
+                allocator.as_ptr(),
+                renderer.as_ptr(),
+            )
         };
     }
 
     #[doc = "Returns the preferred mode for this output. If the output doesn't support\n modes, returns NULL."]
-    pub fn preferred_mode(&mut self) -> Option<&mut OutputMode> {
-        let mode = unsafe { ffi::wlr_output_preferred_mode(self.as_ptr()) };
+    pub fn preferred_mode(self: Pin<&mut Self>) -> Option<&mut OutputMode> {
+        let mode = unsafe { ffi::wlr_output_preferred_mode(self.get_unchecked_mut().as_ptr()) };
 
         NonNull::new(mode).map(|m| unsafe { OutputMode::from_ptr(m) })
     }
@@ -203,9 +208,9 @@ impl Output {
     ///
     /// Note: wlr_output_state_finish() would typically be called after the state
     /// has been committed.
-    pub fn commit_state(&mut self, state: &mut OutputState) {
+    pub fn commit_state(self: Pin<&mut Self>, state: &mut OutputState) {
         // TODO: handle error
-        unsafe { ffi::wlr_output_commit_state(self.as_ptr(), state.as_ptr()) };
+        unsafe { ffi::wlr_output_commit_state(self.get_unchecked_mut().as_ptr(), state.as_ptr()) };
     }
 
     pub fn frame_event(self: Pin<&mut Self>) -> Pin<&mut Signal> {
