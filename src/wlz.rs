@@ -237,7 +237,7 @@ impl WlzServer {
         mem::forget(pinned_box);
     }
 
-	/// This event is raised when a client creates a new toplevel (application window).
+    /// This event is raised when a client creates a new toplevel (application window).
     fn new_xdg_toplevel(self: Pin<&mut Self>, _xdg_toplevel: Pin<&mut XdgToplevel>) {
         unimplemented!()
     }
@@ -349,5 +349,77 @@ impl WlzPopup {
 
     fn destroy(self: Pin<&mut Self>) {
         unsafe { destroy_object(self) };
+    }
+}
+
+#[derive(WlListeners)]
+#[pin_project]
+struct WlzToplevel {
+    link: List,
+    server: NonNull<WlzServer>,
+    xdg_toplevel: XdgToplevel,
+    scene_tree: SceneTree,
+    #[pin]
+    #[listener(callback = map)]
+    map: Listener,
+    #[pin]
+    #[listener(callback = unmap)]
+    unmap: Listener,
+    #[pin]
+    #[listener(callback = commit)]
+    commit: Listener,
+    #[pin]
+    #[listener(callback = destroy)]
+    destroy: Listener,
+    #[pin]
+    #[listener(callback = request_move)]
+    request_move: Listener,
+    #[pin]
+    #[listener(callback = request_resize)]
+    request_resize: Listener,
+    #[pin]
+    #[listener(callback = request_maximize)]
+    request_maximize: Listener,
+    #[pin]
+    #[listener(callback = request_fullscreen)]
+    request_fullscreen: Listener,
+}
+
+impl WlzToplevel {
+    #[initialization]
+    fn init(self: &mut Pin<&mut Self>, server: &mut WlzServer) {
+        *self.as_mut().project().server = NonNull::from_mut(server);
+    }
+
+    fn destroy(self: Pin<&mut Self>) {
+        unsafe { destroy_object(self) };
+    }
+
+    fn map(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn unmap(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn commit(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn request_move(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn request_resize(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn request_maximize(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn request_fullscreen(self: Pin<&mut Self>) {
+        todo!()
     }
 }
