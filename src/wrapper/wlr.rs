@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::ffi::CString;
 use std::mem::zeroed;
+use std::pin::Pin;
 use std::ptr::{null, null_mut, NonNull};
 use std::str::FromStr;
 
@@ -30,28 +31,26 @@ impl Backend {
             .ok_or(WrapperError::FailedToCreateBackend)
     }
 
-    pub fn get_event(&self, event: BackendEvent) -> &Signal {
+    pub fn get_event(&self, event: BackendEvent) -> Pin<&Signal> {
         use BackendEvent::*;
-        let backend = unsafe { self.0.as_ref() };
-        let event_ptr = match event {
-            Destroy => &backend.events.destroy,
-            NewInput => &backend.events.new_input,
-            NewOutput => &backend.events.new_output,
-        } as *const ffi::wl_signal;
-        let signal_ptr = event_ptr as *const Signal;
-        unsafe { &(*signal_ptr) as &Signal }
+        unsafe {
+            Signal::get_event(Pin::new_unchecked(self.as_ref()), |v| match event {
+                Destroy => &v.events.destroy,
+                NewInput => &v.events.new_input,
+                NewOutput => &v.events.new_output,
+            })
+        }
     }
 
-    pub fn get_event_mut(&mut self, event: BackendEvent) -> &mut Signal {
+    pub fn get_event_mut(&mut self, event: BackendEvent) -> Pin<&mut Signal> {
         use BackendEvent::*;
-        let backend = unsafe { self.0.as_mut() };
-        let event_ptr = match event {
-            Destroy => &mut backend.events.destroy,
-            NewInput => &mut backend.events.new_input,
-            NewOutput => &mut backend.events.new_output,
-        } as *mut ffi::wl_signal;
-        let signal_ptr = event_ptr as *mut Signal;
-        unsafe { &mut (*signal_ptr) as &mut Signal }
+        unsafe {
+            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| match event {
+                Destroy => &mut v.events.destroy,
+                NewInput => &mut v.events.new_input,
+                NewOutput => &mut v.events.new_output,
+            })
+        }
     }
 }
 
@@ -149,11 +148,22 @@ impl OutputLayout {
             .ok_or(WrapperError::FailedToCreateOutputLayout)
     }
 
-    #[doc = "Add the output to the layout as automatically configured. This will place\n the output in a sensible location in the layout. The coordinates of\n the output in the layout will be adjusted dynamically when the layout\n changes. If the output is already a part of the layout, it will become\n automatically configured.\n\n Returns the output's output layout, or NULL on error."]
-    pub fn add_auto(&mut self, output: &mut Output) -> Result<OutputLayoutOutput, WrapperError> {
-        NonNull::new(unsafe { ffi::wlr_output_layout_add_auto(self.as_ptr(), output.as_ptr()) })
-            .map(OutputLayoutOutput)
-            .ok_or(WrapperError::FailedOutputLayoutAddAuto)
+    /// Add the output to the layout as automatically configured. This will place
+    /// the output in a sensible location in the layout. The coordinates of
+    /// the output in the layout will be adjusted dynamically when the layout
+    /// changes. If the output is already a part of the layout, it will become
+    /// automatically configured.
+    ///
+    /// Returns the output's output layout, or NULL on error.
+    pub fn add_auto(
+        &mut self,
+        output: Pin<&mut Output>,
+    ) -> Result<OutputLayoutOutput, WrapperError> {
+        NonNull::new(unsafe {
+            ffi::wlr_output_layout_add_auto(self.as_ptr(), output.get_unchecked_mut().as_ptr())
+        })
+        .map(OutputLayoutOutput)
+        .ok_or(WrapperError::FailedOutputLayoutAddAuto)
     }
 }
 
@@ -186,32 +196,41 @@ impl Output {
         NonNull::new(mode).map(|m| unsafe { OutputMode::from_ptr(m) })
     }
 
-    #[doc = "Attempts to apply the state to this output. This function may fail for any\n reason and return false. If failed, none of the state would have been applied,\n this function is atomic. If the commit succeeded, true is returned.\n\n Note: wlr_output_state_finish() would typically be called after the state\n has been committed."]
+    /// Attempts to apply the state to this output. This function may fail for any
+    /// reason and return false. If failed, none of the state would have been applied,
+    /// this function is atomic. If the commit succeeded, true is returned.
+    ///
+    /// Note: wlr_output_state_finish() would typically be called after the state
+    /// has been committed.
     pub fn commit_state(&mut self, state: &mut OutputState) {
         // TODO: handle error
         unsafe { ffi::wlr_output_commit_state(self.as_ptr(), state.as_ptr()) };
     }
 
-    pub fn get_event(&self, ty: OutputEvent) -> &Signal {
+    pub fn get_event(self: Pin<&Self>, ty: OutputEvent) -> Pin<&Signal> {
         use OutputEvent::*;
-        let event_ptr = match ty {
-            Frame => &self.0.events.frame,
-            RequestState => &self.0.events.request_state,
-            Destroy => &self.0.events.destroy,
-        } as *const ffi::wl_signal;
-        let signal_ptr = event_ptr as *const Signal;
-        unsafe { &(*signal_ptr) as &Signal }
+        // SAFETY: This is safe since the interior does not move out of the reference,
+        // and the returned value does not move since it is a field of the pinned value
+        unsafe {
+            Signal::get_event(self, |v| match ty {
+                Frame => &v.0.events.frame,
+                RequestState => &v.0.events.request_state,
+                Destroy => &v.0.events.destroy,
+            })
+        }
     }
 
-    pub fn get_event_mut(&mut self, ty: OutputEvent) -> &mut Signal {
+    pub fn get_event_mut(self: Pin<&mut Self>, ty: OutputEvent) -> Pin<&mut Signal> {
         use OutputEvent::*;
-        let event_ptr = match ty {
-            Frame => &mut self.0.events.frame,
-            RequestState => &mut self.0.events.request_state,
-            Destroy => &mut self.0.events.destroy,
-        } as *mut ffi::wl_signal;
-        let signal_ptr = event_ptr as *mut Signal;
-        unsafe { &mut (*signal_ptr) as &mut Signal }
+        // SAFETY: This is safe since the interior does not move out of the reference,
+        // and the returned value does not move since it is a field of the pinned value
+        unsafe {
+            Signal::get_event_mut(self, |v| match ty {
+                Frame => &mut v.0.events.frame,
+                RequestState => &mut v.0.events.request_state,
+                Destroy => &mut v.0.events.destroy,
+            })
+        }
     }
 }
 
@@ -284,11 +303,15 @@ impl Scene {
             .ok_or(WrapperError::FailedToCreateScene)
     }
 
-    #[doc = "Add a viewport for the specified output to the scene-graph.\n\n An output can only be added once to the scene-graph."]
-    pub fn output_create(&mut self, output: &mut Output) -> Result<SceneOutput, WrapperError> {
-        NonNull::new(unsafe { ffi::wlr_scene_output_create(self.as_ptr(), output.as_ptr()) })
-            .map(SceneOutput)
-            .ok_or(WrapperError::FailedToCreateSceneOutput)
+    /// Add a viewport for the specified output to the scene-graph.
+    ///
+    /// An output can only be added once to the scene-graph.
+    pub fn output_create(&mut self, output: Pin<&mut Output>) -> Result<SceneOutput, WrapperError> {
+        NonNull::new(unsafe {
+            ffi::wlr_scene_output_create(self.as_ptr(), output.get_unchecked_mut().as_ptr())
+        })
+        .map(SceneOutput)
+        .ok_or(WrapperError::FailedToCreateSceneOutput)
     }
 
     #[doc = "Attach an output layout to a scene.\n\n The resulting scene output layout allows to synchronize the positions of scene\n outputs with the positions of corresponding layout outputs.\n\n It is automatically destroyed when the scene or the output layout is destroyed."]
@@ -313,6 +336,7 @@ pub enum XdgShellEvent {
     Destroy,
 }
 
+// TODO: make this pin and make sure the inner type is not unpin
 #[derive(PtrWrapper)]
 pub struct XdgShell(NonNull<ffi::wlr_xdg_shell>);
 
@@ -324,17 +348,16 @@ impl XdgShell {
             .ok_or_else(|| WrapperError::GeneralError("failed to create xdg shell".to_string()))
     }
 
-    pub fn get_event_mut(&mut self, ty: XdgShellEvent) -> &mut Signal {
+    pub fn get_event_mut(&mut self, ty: XdgShellEvent) -> Pin<&mut Signal> {
         use XdgShellEvent::*;
-        let xdg_shell = unsafe { self.0.as_mut() };
-        let event_ptr = match ty {
-            NewSurface => &mut xdg_shell.events.new_surface,
-            NewToplevel => &mut xdg_shell.events.new_toplevel,
-            NewPopup => &mut xdg_shell.events.new_popup,
-            Destroy => &mut xdg_shell.events.destroy,
-        } as *mut ffi::wl_signal;
-        let signal_ptr = event_ptr as *mut Signal;
-        unsafe { &mut (*signal_ptr) as &mut Signal }
+        unsafe {
+            Signal::get_event_mut(Pin::new_unchecked(self.as_ref_mut()), |v| match ty {
+                NewSurface => &mut v.events.new_surface,
+                NewToplevel => &mut v.events.new_toplevel,
+                NewPopup => &mut v.events.new_popup,
+                Destroy => &mut v.events.destroy,
+            })
+        }
     }
 }
 

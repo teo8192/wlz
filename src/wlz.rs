@@ -1,7 +1,9 @@
 use std::mem::{self, MaybeUninit};
+use std::pin::Pin;
 use std::ptr::NonNull;
 use std::{error::Error, fmt};
 
+use pin_project::pin_project;
 use wlz_macros::{initialization, WlListeners};
 
 use crate::wrapper::wl::{Display, List, Listener};
@@ -11,7 +13,7 @@ use crate::wrapper::wlr::{
     XdgShell, XdgShellEvent,
 };
 use crate::wrapper::WrapperError;
-use crate::{error, ffi};
+use crate::{destroy_object, error};
 
 #[derive(Debug)]
 pub enum WlzError {
@@ -32,9 +34,12 @@ impl From<WrapperError> for WlzError {
     }
 }
 
+#[pin_project]
 #[derive(WlListeners)]
 pub struct WlzServer {
+    #[pin]
     outputs: List,
+    #[pin]
     #[listener("new_output", Output)]
     new_output: Listener,
     // field order is important, they are dropped in the order they are declared
@@ -43,11 +48,14 @@ pub struct WlzServer {
     scene_layout: SceneOutputLayout,
     scene: Scene,
 
+    #[pin]
     toplevels: List,
     xdg_shell: XdgShell,
+    #[pin]
     #[listener("new_xdg_toplevel")]
     new_xdg_toplevel: Listener,
 
+    #[pin]
     #[listener("new_xdg_popup")]
     new_xdg_popup: Listener,
 
@@ -63,30 +71,31 @@ pub struct WlzServer {
 
 impl WlzServer {
     #[initialization]
-    pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn init(self: &mut Pin<&mut Self>) -> Result<(), Box<dyn Error>> {
+        let this = self.as_mut().project();
         /* The Wayland display is managed by libwayland. It handles accepting
          * clients from the Unix socket, manging Wayland globals, and so on. */
-        self.display = Display::try_create()?;
+        *this.display = Display::try_create()?;
 
         /* The backend is a wlroots feature which abstracts the underlying input and
          * output hardware. The autocreate option will choose the most suitable
          * backend based on the current environment, such as opening an X11 window
          * if an X11 server is running. */
-        self.backend = Backend::autocreate(self.display.get_event_loop())?;
+        *this.backend = Backend::autocreate(this.display.get_event_loop())?;
 
         /* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
          * can also specify a renderer using the WLR_RENDERER env var.
          * The renderer is responsible for defining the various pixel formats it
          * supports for shared memory, this configures that for clients. */
-        self.renderer = Renderer::autocreate(&mut self.backend)?;
+        *this.renderer = Renderer::autocreate(this.backend)?;
 
-        self.renderer.init_wl_display(&mut self.display)?;
+        this.renderer.init_wl_display(this.display)?;
 
         /* Autocreates an allocator for us.
          * The allocator is the bridge between the renderer and the backend. It
          * handles the buffer creation, allowing wlroots to render onto the
          * screen */
-        self.allocator = Allocator::autocreate(&mut self.backend, &mut self.renderer)?;
+        *this.allocator = Allocator::autocreate(this.backend, this.renderer)?;
 
         /* This creates some hands-off wlroots interfaces. The compositor is
          * necessary for clients to allocate surfaces, the subcompositor allows to
@@ -95,22 +104,21 @@ impl WlzServer {
          * to dig your fingers in and play with their behavior if you want. Note that
          * the clients cannot set the selection directly without compositor approval,
          * see the handling of the request_set_selection event below.*/
-        Compositor::create(&mut self.display, 5, &mut self.renderer)?;
-        SubCompositor::create(&mut self.display)?;
-        DataDeviceManager::create(&mut self.display)?;
+        Compositor::create(this.display, 5, this.renderer)?;
+        SubCompositor::create(this.display)?;
+        DataDeviceManager::create(this.display)?;
 
         /* Creates an output layout, which a wlroots utility for working with an
          * arrangement of screens in a physical layout. */
-        self.output_layout = OutputLayout::create(&mut self.display)?;
+        *this.output_layout = OutputLayout::create(this.display)?;
 
         /* Configure a listener to be notified when new outputs are available on the
          * backend. */
-        self.outputs.init();
+        this.outputs.init();
 
-        self.init_new_output();
-        self.backend
+        this.backend
             .get_event_mut(BackendEvent::NewOutput)
-            .add(&mut self.new_output);
+            .add(this.new_output);
 
         /* Create a scene graph. This is a wlroots abstraction that handles all
          * rendering and damage tracking. All the compositor author needs to do
@@ -118,46 +126,46 @@ impl WlzServer {
          * positions and then call wlr_scene_output_commit() to render a frame if
          * necessary.
          */
-        self.scene = Scene::create()?;
-        self.scene_layout = self.scene.attach_output_layout(&mut self.output_layout)?;
+        *this.scene = Scene::create()?;
+        *this.scene_layout = this.scene.attach_output_layout(this.output_layout)?;
 
         /* Set up xdg-shell version 3. The xdg-shell is a Wayland protocol which is
          * used for application windows. For more detail on shells, refer to
          * https://drewdevault.com/2018/07/29/Wayland-shells.html.
          */
-        self.toplevels.init();
-        self.xdg_shell = XdgShell::create(&mut self.display, 3)?;
-        self.init_new_xdg_toplevel();
-        self.xdg_shell
+        this.toplevels.init();
+        *this.xdg_shell = XdgShell::create(this.display, 3)?;
+
+        this.xdg_shell
             .get_event_mut(XdgShellEvent::NewToplevel)
-            .add(&mut self.new_xdg_toplevel);
-        self.init_new_xdg_popup();
-        self.xdg_shell
+            .add(this.new_xdg_toplevel);
+        this.xdg_shell
             .get_event_mut(XdgShellEvent::NewPopup)
-            .add(&mut self.new_xdg_popup);
+            .add(this.new_xdg_popup);
 
         /*
          * Creates a cursor, which is a wlroots utility for tracking the cursor
          * image shown on screen.
          */
-        self.cursor = Cursor::create()?;
-        self.cursor.attach_output_layout(&mut self.output_layout);
+        *this.cursor = Cursor::create()?;
+        this.cursor.attach_output_layout(this.output_layout);
 
         /* Creates an xcursor manager, another wlroots utility which loads up
          * Xcursor themes to source cursor images from and makes sure that cursor
          * images are available at all scale factors on the screen (necessary for
          * HiDPI support). */
-        self.cursor_mgr = XCursorManager::create(None, 24)?;
+        *this.cursor_mgr = XCursorManager::create(None, 24)?;
 
         Ok(())
     }
 
     /// This event is raised by the backend when a new output (aka a display or
     /// monitor) becomes available.
-    pub fn new_output(&mut self, wlr_output: &mut Output) {
+    pub fn new_output(mut self: Pin<&mut Self>, mut wlr_output: Pin<&mut Output>) {
+        let this = self.as_mut().project();
         /* Configures the output created by the backend to use our allocator
          * and our renderer. Must be done once, before commiting the output */
-        wlr_output.init_renderer(&mut self.allocator, &mut self.renderer);
+        wlr_output.init_renderer(this.allocator, this.renderer);
 
         /* The output may be disabled, switch it on. */
         let mut state = OutputState::new();
@@ -178,28 +186,34 @@ impl WlzServer {
 
         /* Allocates and configures our state for this output */
         let mut pinned_box = Box::pin(MaybeUninit::uninit());
-        let output = WlzOutput::initialize(pinned_box.as_mut(), self, wlr_output);
-        let output = unsafe { output.get_unchecked_mut() };
+        let mut output = WlzOutput::initialize(
+            pinned_box.as_mut(),
+            unsafe { self.as_mut().get_unchecked_mut() },
+            unsafe { wlr_output.as_mut().get_unchecked_mut() },
+        );
+        // reborrow this again
+        let this = self.as_mut().project();
+        //let output = unsafe { output.get_unchecked_mut() };
 
         /* Sets up a listener for the frame event. */
-        output.init_frame();
         wlr_output
+            .as_mut()
             .get_event_mut(OutputEvent::Frame)
-            .add(&mut output.frame);
+            .add(output.as_mut().project().frame);
 
         /* Sets up a listener for the state request event. */
-        output.init_request_state();
         wlr_output
+            .as_mut()
             .get_event_mut(OutputEvent::RequestState)
-            .add(&mut output.request_state);
+            .add(output.as_mut().project().request_state);
 
         /* Sets up a listener for the destroy event. */
-        output.init_destroy();
         wlr_output
+            .as_mut()
             .get_event_mut(OutputEvent::Destroy)
-            .add(&mut output.destroy);
+            .add(output.as_mut().project().destroy);
 
-        self.outputs.insert(&mut output.link);
+        this.outputs.insert(output.project().link);
 
         /* Adds this to the output layout. The add_auto function arranges outputs
          * from left-to-right in the order they appear. A more sophisticated
@@ -211,9 +225,10 @@ impl WlzServer {
          * output (such as DPI, scale factor, manufacturer, etc).
          */
         if let Err(e) = (|| {
-            let mut l_output = self.output_layout.add_auto(wlr_output)?;
-            let mut scene_output = self.scene.output_create(wlr_output)?;
-            self.scene_layout
+            let mut l_output = this.output_layout.add_auto(wlr_output.as_mut())?;
+
+            let mut scene_output = this.scene.output_create(wlr_output)?;
+            this.scene_layout
                 .add_output(&mut l_output, &mut scene_output);
             Ok::<(), WrapperError>(())
         })() {
@@ -224,50 +239,53 @@ impl WlzServer {
         mem::forget(pinned_box);
     }
 
-    fn new_xdg_toplevel(&mut self) {
+    fn new_xdg_toplevel(self: Pin<&mut Self>) {
         unimplemented!()
     }
 
-    fn new_xdg_popup(&mut self) {
+    fn new_xdg_popup(self: Pin<&mut Self>) {
         unimplemented!()
     }
 
-    pub fn display(&self) -> &Display {
+    /*pub fn display(&self) -> &Display {
         &self.display
-    }
+    }*/
 }
 
 #[derive(WlListeners)]
+#[pin_project]
 struct WlzOutput {
+    #[pin]
     link: List,
     server: NonNull<WlzServer>,
     output: NonNull<Output>,
+    #[pin]
     #[listener("frame")]
     frame: Listener,
+    #[pin]
     #[listener("request_state")]
     request_state: Listener,
+    #[pin]
     #[listener("destroy")]
     destroy: Listener,
 }
 
 impl WlzOutput {
     #[initialization]
-    fn init(&mut self, server: &mut WlzServer, output: &mut Output) {
-        self.server = NonNull::new(server as *mut WlzServer).unwrap();
-        self.output = NonNull::new(output as *mut Output).unwrap();
+    fn init(self: &mut Pin<&mut Self>, server: &mut WlzServer, output: &mut Output) {
+        *self.as_mut().project().server = NonNull::new(server as *mut WlzServer).unwrap();
+        *self.as_mut().project().output = NonNull::new(output as *mut Output).unwrap();
     }
 
-    fn destroy(&mut self) {
-        unsafe { ffi::wl_list_remove(self.link.as_ptr()) };
-        // create the box to let it go out of scope to drop all stuff in this thing
-        drop(unsafe { Box::from_raw(self as *mut Self) });
+    fn destroy(self: Pin<&mut Self>) {
+        unsafe { destroy_object(self) };
     }
 
-    fn frame(&mut self) {
+    fn frame(self: Pin<&mut Self>) {
         todo!()
     }
 
-    fn request_state(&mut self) {
+    fn request_state(self: Pin<&mut Self>) {
         todo!()
     }
 }

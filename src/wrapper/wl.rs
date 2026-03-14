@@ -1,8 +1,10 @@
 use std::error::Error;
 use std::ffi::CStr;
 use std::marker::PhantomPinned;
+use std::pin::Pin;
 use std::ptr::{null_mut, NonNull};
 
+use pin_project::pin_project;
 use wlz_macros::{c_drop, c_ptr, PtrWrapper};
 
 use crate::ffi;
@@ -45,10 +47,12 @@ impl Display {
     }
 }
 
-/// Reimplementation of `ffi::wl_listener`
+/// Reimplementation of `ffi::we_listener`
 #[c_ptr(ffi::wl_listener)]
 #[repr(C)]
+#[pin_project]
 pub struct Listener {
+    #[pin]
     link: List,
     notify: ffi::wl_notify_func_t,
 }
@@ -64,9 +68,10 @@ impl Listener {
         }
     }
 
-    pub fn init(&mut self, notify: ListenerCallback) {
-        self.notify = Some(notify);
-        self.link.init();
+    pub fn init(self: Pin<&mut Self>, notify: ListenerCallback) {
+        let this = self.project();
+        *this.notify = Some(notify);
+        this.link.init();
     }
 
     pub fn empty() -> Self {
@@ -99,8 +104,8 @@ impl Drop for List {
 }
 
 impl List {
-    pub fn init(&mut self) {
-        unsafe { ffi::wl_list_init(self.as_ptr()) };
+    pub fn init(self: Pin<&mut Self>) {
+        unsafe { ffi::wl_list_init(self.get_unchecked_mut().as_ptr()) };
     }
 
     pub fn empty() -> Self {
@@ -113,14 +118,21 @@ impl List {
         }
     }
 
-    pub fn insert(&mut self, other: &mut Self) {
-        unsafe { ffi::wl_list_insert(self.as_ptr(), other.as_ptr()) };
+    pub fn insert(self: Pin<&mut Self>, other: Pin<&mut Self>) {
+        unsafe {
+            ffi::wl_list_insert(
+                self.get_unchecked_mut().as_ptr(),
+                other.get_unchecked_mut().as_ptr(),
+            )
+        };
     }
 }
 
 #[c_ptr(ffi::wl_signal)]
 #[repr(C)]
+#[pin_project]
 pub struct Signal {
+    #[pin]
     listener_list: List,
 }
 
@@ -133,26 +145,74 @@ impl Signal {
     ///
     /// # See also
     /// `wl_signal`
-    pub fn add(&mut self, listener: &mut Listener) {
-        unsafe { ffi::wl_signal_add(self.as_ptr(), listener.as_ptr()) };
+    pub fn add(self: Pin<&mut Self>, listener: Pin<&mut Listener>) {
+        unsafe {
+            ffi::wl_signal_add(
+                self.get_unchecked_mut().as_ptr(),
+                listener.get_unchecked_mut().as_ptr(),
+            )
+        };
     }
 
-    pub fn emit(&mut self) {
-        unsafe { ffi::wl_signal_emit_mutable(self.as_ptr(), null_mut()) };
+    pub fn emit(self: Pin<&mut Self>) {
+        unsafe { ffi::wl_signal_emit_mutable(self.get_unchecked_mut().as_ptr(), null_mut()) };
     }
 
-    pub fn emit_arg<T>(&mut self, data: &mut T) {
+    pub fn emit_arg<T>(self: Pin<&mut Self>, data: &mut T) {
         let ptr = data as *mut T;
-        unsafe { ffi::wl_signal_emit_mutable(self.as_ptr(), ptr as *mut std::os::raw::c_void) };
+        unsafe {
+            ffi::wl_signal_emit_mutable(
+                self.get_unchecked_mut().as_ptr(),
+                ptr as *mut std::os::raw::c_void,
+            )
+        };
     }
 
-    pub fn init(&mut self) {
-        self.listener_list.init();
+    pub fn init(self: Pin<&mut Self>) {
+        self.project().listener_list.init();
     }
 
     pub fn empty() -> Self {
         Self {
             listener_list: List::empty(),
+        }
+    }
+
+    /// # Safety
+    ///
+    /// This function is unsafe. You must guarantee that the data you return
+    /// will not move so long as the argument value does not move (for example,
+    /// because it is one of the fields of that value), and also that you do
+    /// not move out of the argument you receive to the interior function.
+    pub unsafe fn get_event<T, F>(obj: Pin<&T>, func: F) -> Pin<&Self>
+    where
+        F: Fn(&T) -> &ffi::wl_signal,
+    {
+        unsafe {
+            obj.map_unchecked(|v| {
+                (func(v) as *const ffi::wl_signal as *const Self)
+                    .as_ref()
+                    .unwrap()
+            })
+        }
+    }
+
+    /// # Safety
+    ///
+    /// This function is unsafe. You must guarantee that the data you return
+    /// will not move so long as the argument value does not move (for example,
+    /// because it is one of the fields of that value), and also that you do
+    /// not move out of the argument you receive to the interior function.
+    pub unsafe fn get_event_mut<T, F>(obj: Pin<&mut T>, func: F) -> Pin<&mut Self>
+    where
+        F: Fn(&mut T) -> &mut ffi::wl_signal,
+    {
+        unsafe {
+            obj.map_unchecked_mut(|v| {
+                (func(v) as *mut ffi::wl_signal as *mut Self)
+                    .as_mut()
+                    .unwrap()
+            })
         }
     }
 }

@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{
-    Attribute, Data, DeriveInput, FnArg, GenericArgument, Ident, Item, LitStr, Pat, Path, PathArguments, Receiver, ReturnType, Token, Type, parse::{Parse, ParseStream}, parse_macro_input, spanned::Spanned
+    Attribute, Data, DeriveInput, Field, Fields, FnArg, GenericArgument, Ident, Item, LitStr, Pat, Path, PathArguments, Receiver, ReturnType, Token, Type, parse::{Parse, ParseStream}, parse_macro_input, spanned::Spanned
 };
 use heck::ToSnakeCase;
 
@@ -124,6 +124,85 @@ impl Parse for ListenerAttr {
     }
 }
 
+fn get_listeners(fields: Fields) -> Vec<(Field, ListenerAttr)> {
+    let mut res = Vec::new();
+
+    for field in fields {
+        if let Some(attr) = field.attrs.iter().find(|a| a.path().is_ident("listener")) {
+            let listener = attr.parse_args::<ListenerAttr>().unwrap();
+            res.push((field, listener));
+        }
+    }
+
+    res
+}
+
+fn trampoline_name(field_name: &Ident, struct_name: &Ident) -> Ident {
+    Ident::new(
+        &format!("__{}_{}_trampoline", struct_name.to_string().to_snake_case(), field_name),
+        field_name.span(),
+    )
+}
+
+fn create_trampoline(struct_name: &Ident, field_name: &Ident, listener: &ListenerAttr) -> impl ToTokens + use<> {
+    let cb_ident = Ident::new(&listener.name.value(), listener.name.span());
+
+    let trampoline_name = trampoline_name(field_name, struct_name);
+
+    let func_call = if let Some(ty_path) = &listener.ty {
+        quote! {
+            //let data_mut_ref = ;
+            //(*this).#cb_ident(data_mut_ref)
+            #cb_ident(::std::pin::Pin::new_unchecked((data as *mut #ty_path).as_mut().unwrap()))
+        }
+    } else {
+        quote! {
+            #cb_ident()
+        }
+    };
+
+    quote! {
+        /// Trampoline for to be used in C callbacks.
+        unsafe extern "C" fn #trampoline_name(
+            listener: *mut crate::ffi::wl_listener,
+            data: *mut std::ffi::c_void,
+        ) {
+            if listener.is_null() {
+                crate::error!("failed listener callback, listener is NULL!");
+                return;
+            }
+
+            let this = (listener as *mut u8)
+                .sub(::memoffset::offset_of!(#struct_name, #field_name))
+                as *mut #struct_name;
+
+            unsafe { ::std::pin::Pin::new_unchecked(this.as_mut().unwrap()) }.#func_call;
+        }
+    }
+}
+
+fn init_name(field_name: &Ident) -> Ident {
+    Ident::new(
+        &format!("__init_{}", field_name),
+        field_name.span()
+    )
+}
+
+fn create_init(struct_name: &Ident, field_name: &Ident) -> impl ToTokens + use<> {
+    let trampoline_name = trampoline_name(field_name, struct_name);
+
+    let init_name = init_name(field_name);
+
+    quote! {
+        /// In place initialization
+        fn #init_name(mut self: ::std::pin::Pin<&mut Self>) {
+            self.project().#field_name.init(Self::#trampoline_name);
+            //let listener = unsafe { self.map_unchecked_mut(|paren| paren.#field_name) };
+            //listener.init(Self::#trampoline_name);
+        }
+    }
+}
+
 #[proc_macro_derive(WlListeners, attributes(listener))]
 pub fn derive_wl_listeners(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -144,75 +223,26 @@ pub fn derive_wl_listeners(input: TokenStream) -> TokenStream {
 
     let mut trampolines = Vec::new();
     let mut inits = Vec::new();
+    let mut init_calls = Vec::new();
 
-    let struct_snake_case = struct_name.to_string().to_snake_case();
-
-    for field in fields {
+    for (field, listener) in get_listeners(fields) {
         let field_name = &field.ident.unwrap();
-
         let field_ty = &field.ty;
 
-        for attr in field.attrs.iter().filter(|a| a.path().is_ident("listener")) {
-            let listener = attr.parse_args::<ListenerAttr>().unwrap();
-            let cb_ident = Ident::new(&listener.name.value(), listener.name.span());
-
-            // check if field type is listener
-            if match field_ty {
-                Type::Path(path) => !path.path.is_ident("Listener"),
-                _ => true,
-            } {
-                return syn::Error::new_spanned(field_ty, "listener attribute are only for fields of Listener type")
-                    .into_compile_error()
-                    .into();
-            }
-
-            let trampoline_name = Ident::new(
-                &format!("__{}_{}_trampoline", struct_snake_case, field_name),
-                field_name.span(),
-            );
-
-            let func_call = if let Some(ty_path) = &listener.ty {
-                quote! {
-                    let data_mut_ref = &mut (*(data as *mut #ty_path));
-                    (*this).#cb_ident(data_mut_ref)
-                }
-            } else {
-                quote! {
-                    (*this).#cb_ident()
-                }
-            };
-
-            trampolines.push(quote! {
-                /// Trampoline for to be used in C callbacks.
-                unsafe extern "C" fn #trampoline_name(
-                    listener: *mut crate::ffi::wl_listener,
-                    data: *mut std::ffi::c_void,
-                ) {
-                    if listener.is_null() {
-                        crate::error!("failed listener callback, listener is NULL!");
-                        return;
-                    }
-
-                    let this = (listener as *mut u8)
-                        .sub(::memoffset::offset_of!(#struct_name, #field_name))
-                        as *mut #struct_name;
-
-                    #func_call;
-                }
-            });
-
-            let init_name = Ident::new(
-                &format!("init_{}", field_name),
-                field_name.span()
-            );
-
-            inits.push(quote! {
-                /// In place initialization
-                fn #init_name(&mut self) {
-                    self.#field_name.init(Self::#trampoline_name);
-                }
-            });
+        // check if field type is listener
+        if match field_ty {
+            Type::Path(path) => !path.path.is_ident("Listener"),
+            _ => true,
+        } {
+            return syn::Error::new_spanned(field_ty, "listener attribute are only for fields of Listener type")
+                .into_compile_error()
+                .into();
         }
+
+        trampolines.push(create_trampoline(struct_name, field_name, &listener));
+
+        init_calls.push(init_name(field_name));
+        inits.push(create_init(struct_name, field_name));
     }
 
     quote! {
@@ -220,6 +250,10 @@ pub fn derive_wl_listeners(input: TokenStream) -> TokenStream {
             #(#trampolines)*
 
             #(#inits)*
+
+            fn __initialize_callbacks(mut self: ::std::pin::Pin<&mut Self>) {
+                #(self.as_mut().#init_calls();)*
+            }
         }
     }
     .into()
@@ -369,14 +403,17 @@ pub fn initialization(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // make sure &mut self
     match sig.inputs.first() {
-        Some(FnArg::Receiver(Receiver { reference: Some(_), mutability: Some(_), .. })) => {},
-        Some(first) => {
-            return syn::Error::new(first.span(), "expected &mut self")
-                .to_compile_error()
-                .into();
-        }
-        None => {
-            return syn::Error::new(sig.span(), "expected &mut self")
+        Some(FnArg::Receiver(Receiver {
+            reference: None,
+            mutability: None,
+            colon_token: Some(_),
+            ty: _ty,
+            ..
+        })) => {
+            // TODO: check that ty is &mut Pin<&mut self>
+        },
+        _ => {
+            return syn::Error::new(sig.span(), "expected self: &mut Pin<&mut Self>")
                 .to_compile_error()
                 .into();
         }
@@ -407,7 +444,7 @@ pub fn initialization(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     fn get_return_type(ty: &ReturnType) -> &Type {
         match ty {
-            ReturnType::Type(_, ty) => &**ty,
+            ReturnType::Type(_, ty) => ty,
             _ => panic!("unexpected type")
         }
     }
@@ -475,9 +512,18 @@ pub fn initialization(attr: TokenStream, item: TokenStream) -> TokenStream {
     let result_handler = match ret_kind {
         ReturnKind::Result |
         ReturnKind::Option => quote! {
-            result.map(|_| new_ptr)
+            result.map(|_| this)
         },
-        ReturnKind::Plain => quote! { new_ptr },
+        ReturnKind::Plain => quote! { this },
+        ReturnKind::Unknown => unreachable!(),
+    };
+
+    let result_storage = match ret_kind {
+        ReturnKind::Result |
+        ReturnKind::Option => quote! {
+            let result =
+        },
+        ReturnKind::Plain => quote! { },
         ReturnKind::Unknown => unreachable!(),
     };
 
@@ -485,16 +531,11 @@ pub fn initialization(attr: TokenStream, item: TokenStream) -> TokenStream {
         #func
 
         /// In place initialization
-        #vis fn initialize<'a>(ref mut uninit: ::std::pin::Pin<&'a mut ::std::mem::MaybeUninit<Self>> #(, #args)*) -> #ret_type {
-            // must reborrow uninit here (another .as_mut() call)
-            let old_ptr = unsafe { uninit.as_mut().get_unchecked_mut().as_mut_ptr() };
-            ::std::mem::forget(uninit);
+        #vis fn initialize<'a>(mut uninit: ::std::pin::Pin<&'a mut ::std::mem::MaybeUninit<Self>> #(, #args)*) -> #ret_type {
+            let mut this = unsafe { uninit.map_unchecked_mut(|v| v.assume_init_mut()) };
 
-            let result = unsafe { old_ptr.as_mut().unwrap() }.#fn_name(#(#arg_idents),*);
-
-            // SAFETY:
-            // This is safe, since we know that the value being pointed to is pinned
-            let new_ptr: ::std::pin::Pin<&mut Self> = unsafe { ::std::pin::Pin::new_unchecked(old_ptr.as_mut().unwrap()) };
+            this.as_mut().__initialize_callbacks();
+            #result_storage this.#fn_name(#(#arg_idents),*);
 
             #result_handler
         }
