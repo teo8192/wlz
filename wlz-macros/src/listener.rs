@@ -245,7 +245,7 @@ pub(crate) fn initialization(attr: TokenStream, item: TokenStream) -> TokenStrea
     let arg_idents: Vec<_> = args.iter().map(|arg| {
         match arg {
             FnArg::Typed(pat) => {
-                if let Pat::Ident(id) = &*pat.pat {
+                if let Pat::Ident(id) = pat.pat.as_ref() {
                     &id.ident
                 } else {
                     panic!("unsupported pattern")
@@ -274,7 +274,7 @@ pub(crate) fn initialization(attr: TokenStream, item: TokenStream) -> TokenStrea
     fn classify_return(ty: &ReturnType) -> ReturnKind {
         match ty {
             ReturnType::Type(_, ty) => {
-                if let Type::Path(p) = &**ty {
+                if let Type::Path(p) = ty.as_ref() {
                     let seg = &p.path.segments.last().unwrap().ident;
                     if seg == "Result" {
                         ReturnKind::Result
