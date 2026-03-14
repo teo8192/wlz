@@ -33,6 +33,12 @@ impl From<WrapperError> for WlzError {
     }
 }
 
+enum WlzCursorMode {
+    Passthough,
+    Move,
+    Resize,
+}
+
 #[pin_project]
 #[derive(WlListeners)]
 pub struct WlzServer {
@@ -58,10 +64,26 @@ pub struct WlzServer {
     #[listener(callback = new_xdg_popup)]
     new_xdg_popup: Listener<XdgPopup>,
 
+    cursor_mode: WlzCursorMode,
+
+    #[pin]
+    #[listener(callback = cursor_motion)]
+    cursor_motion: Listener,
+    #[pin]
+    #[listener(callback = cursor_motion_absolute)]
+    cursor_motion_absolute: Listener,
+    #[pin]
+    #[listener(callback = cursor_button)]
+    cursor_button: Listener,
+    #[pin]
+    #[listener(callback = cursor_axis)]
+    cursor_axis: Listener,
+    #[pin]
+    #[listener(callback = cursor_frame)]
+    cursor_frame: Listener,
+
     cursor_mgr: XCursorManager,
-
     cursor: Cursor,
-
     allocator: Allocator,
     renderer: Renderer,
     backend: Backend,
@@ -150,6 +172,23 @@ impl WlzServer {
          * images are available at all scale factors on the screen (necessary for
          * HiDPI support). */
         *this.cursor_mgr = XCursorManager::create(None, 24)?;
+
+        /*
+         * wlr_cursor *only* displays an image on screen. It does not move around
+         * when the pointer moves. However, we can attach input devices to it, and
+         * it will generate aggregate events for all of them. In these events, we
+         * can choose how we want to process them, forwarding them to clients and
+         * moving the cursor around. More detail on this process is described in
+         * https://drewdevault.com/2018/07/17/Input-handling-in-wlroots.html.
+         *
+         * And more comments are sprinkled throughout the notify functions above.
+         */
+        *this.cursor_mode = WlzCursorMode::Passthough;
+        this.cursor.motion_event().add(this.cursor_motion);
+        this.cursor.motion_absolute_event().add(this.cursor_motion_absolute);
+        this.cursor.button_event().add(this.cursor_button);
+        this.cursor.axis_event().add(this.cursor_axis);
+        this.cursor.frame_event().add(this.cursor_frame);
 
         Ok(())
     }
@@ -265,9 +304,25 @@ impl WlzServer {
         mem::forget(pinned_box);
     }
 
-    /*pub fn display(&self) -> &Display {
-        &self.display
-    }*/
+    fn cursor_motion(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn cursor_motion_absolute(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn cursor_button(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn cursor_axis(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn cursor_frame(self: Pin<&mut Self>) {
+        todo!()
+    }
 }
 
 #[derive(WlListeners)]

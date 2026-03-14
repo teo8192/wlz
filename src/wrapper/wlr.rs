@@ -421,6 +421,31 @@ impl Cursor {
     pub fn attach_output_layout(&mut self, output_layout: &mut OutputLayout) {
         unsafe { ffi::wlr_cursor_attach_output_layout(self.as_ptr(), output_layout.as_ptr()) };
     }
+
+    events_nopin!(
+        motion,
+        motion_absolute,
+        button,
+        axis,
+        frame,
+        swipe_begin,
+        swipe_update,
+        swipe_end,
+        pinch_begin,
+        pinch_update,
+        pinch_end,
+        hold_begin,
+        hold_end,
+        touch_up,
+        touch_down,
+        touch_motion,
+        touch_cancel,
+        touch_frame,
+        tablet_tool_axis,
+        tablet_tool_proximity,
+        tablet_tool_tip,
+        tablet_tool_button,
+    );
 }
 
 /// struct wlr_xcursor_manager dynamically loads xcursor themes at sizes necessary
