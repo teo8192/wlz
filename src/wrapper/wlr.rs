@@ -94,7 +94,26 @@ impl Backend {
             .ok_or(WrapperError::FailedToCreateBackend)
     }
 
-    events_nopin!(new_output<Output>);
+    /// Start the backend. This may signal new_input or new_output immediately, but
+    /// may also wait until the event loop is started.
+    pub fn start(&mut self) -> Result<(), WrapperError> {
+        let result = unsafe { ffi::wlr_backend_start(self.as_ptr()) };
+
+        if result {
+            Ok(())
+        } else {
+            Err(WrapperError::BackendStartFailure)
+        }
+    }
+
+    events_nopin!(
+        /// Raised when new outputs are added, passed the struct wlr_output
+        new_output<Output>,
+        /// Raised when new inputs are added, passed the struct wlr_input_device,
+        new_input<InputDevice>,
+        /// Raised when destroyed
+        destroy,
+    );
 }
 
 #[doc = "A renderer for basic 2D operations."]
@@ -104,6 +123,7 @@ pub struct Renderer(NonNull<ffi::wlr_renderer>);
 
 impl Renderer {
     #[doc = "Automatically create a new renderer.\n\n Selects an appropriate renderer type to use depending on the backend,\n platform, environment, etc."]
+
     pub fn autocreate(backend: &mut Backend) -> Result<Self, WrapperError> {
         NonNull::new(unsafe { ffi::wlr_renderer_autocreate(backend.as_ptr()) })
             .map(Self)
@@ -212,6 +232,20 @@ impl OutputLayout {
 
 #[derive(PtrWrapper)]
 pub struct OutputLayoutOutput(NonNull<ffi::wlr_output_layout_output>);
+
+/// An input device.
+///
+/// Depending on its type, the input device can be converted to a more specific
+/// type. See the various wlr_*_from_input_device() functions.
+///
+/// Input devices are typically advertised by the new_input event in
+/// struct wlr_backend.
+#[derive(FromPtr, Debug)]
+pub struct InputDevice(ffi::wlr_input_device, PhantomPinned);
+
+impl InputDevice {
+    events!(destroy);
+}
 
 /// A compositor output region. This typically corresponds to a monitor that
 /// displays part of the compositor space.
@@ -459,20 +493,18 @@ pub struct XCursorManager(NonNull<ffi::wlr_xcursor_manager>);
 impl XCursorManager {
     /// Creates a new XCursor manager with the given xcursor theme name and base size
     /// (for use when scale=1).
-    pub fn create(name: Option<&str>, size: u32) -> Result<Self, Box<dyn Error>> {
+    pub fn create(name: Option<&str>, size: u32) -> Result<Self, WrapperError> {
         let nn = if let Some(name) = name {
             CString::from_str(name)
         } else {
             CString::from_str("")
         }?;
         let ptr = if name.is_some() { nn.as_ptr() } else { null() };
-        Ok(
-            NonNull::new(unsafe { ffi::wlr_xcursor_manager_create(ptr, size) })
-                .map(Self)
-                .ok_or_else(|| {
-                    WrapperError::GeneralError("Failed to create xcursor manager".to_string())
-                })?,
-        )
+        NonNull::new(unsafe { ffi::wlr_xcursor_manager_create(ptr, size) })
+            .map(Self)
+            .ok_or_else(|| {
+                WrapperError::GeneralError("Failed to create xcursor manager".to_string())
+            })
     }
 }
 
@@ -615,4 +647,34 @@ impl DataField for XdgSurface {
     fn data_ptr(&mut self) -> &mut *mut std::os::raw::c_void {
         &mut self.as_mut().data
     }
+}
+
+#[derive(PtrWrapper)]
+pub struct Seat(NonNull<ffi::wlr_seat>);
+
+impl Seat {
+    pub fn create(display: &mut Display, name: &str) -> Result<Self, WrapperError> {
+        let c_name = CString::new(name)?;
+        Self::try_from(unsafe {
+            ffi::wlr_seat_create(display.as_ptr(), c_name.as_c_str().as_ptr())
+        })
+        .map_err(|_| WrapperError::GeneralError(format!("Failed to create seat '{}'", name)))
+    }
+
+    events_nopin!(
+        pointer_grab_begin,
+        pointer_grab_end,
+        keyboard_grab_begin,
+        keyboard_grab_end,
+        touch_grab_begin,
+        touch_grab_end,
+        request_set_cursor,
+        request_set_selection,
+        set_selection,
+        request_set_primary_selection,
+        set_primary_selection,
+        request_start_drag,
+        start_drag,
+        destroy,
+    );
 }

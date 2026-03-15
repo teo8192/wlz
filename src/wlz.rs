@@ -7,12 +7,12 @@ use wlz_macros::{initialization, WlListeners};
 
 use crate::wrapper::wl::{Display, List, Listener};
 use crate::wrapper::wlr::{
-    Allocator, Backend, Compositor, Cursor, DataDeviceManager, DataField, Output, OutputLayout,
-    OutputState, Renderer, Scene, SceneOutputLayout, SceneTree, SubCompositor, XCursorManager,
-    XdgPopup, XdgShell, XdgToplevel,
+    Allocator, Backend, Compositor, Cursor, DataDeviceManager, DataField, InputDevice, Output,
+    OutputLayout, OutputState, Renderer, Scene, SceneOutputLayout, SceneTree, Seat, SubCompositor,
+    XCursorManager, XdgPopup, XdgShell, XdgToplevel,
 };
 use crate::wrapper::WrapperError;
-use crate::{destroy_object, error};
+use crate::{destroy_object, error, info};
 
 #[derive(Debug)]
 pub enum WlzError {
@@ -67,6 +67,9 @@ pub struct WlzServer {
     cursor_mode: WlzCursorMode,
 
     #[pin]
+    keyboards: List,
+
+    #[pin]
     #[listener(callback = cursor_motion)]
     cursor_motion: Listener,
     #[pin]
@@ -82,6 +85,18 @@ pub struct WlzServer {
     #[listener(callback = cursor_frame)]
     cursor_frame: Listener,
 
+    #[pin]
+    #[listener(callback = new_input)]
+    new_input: Listener<InputDevice>,
+    #[pin]
+    #[listener(callback = request_cursor)]
+    request_cursor: Listener,
+    #[pin]
+    #[listener(callback = request_set_selection)]
+    request_set_selection: Listener,
+
+    seat: Seat,
+
     cursor_mgr: XCursorManager,
     cursor: Cursor,
     allocator: Allocator,
@@ -90,25 +105,34 @@ pub struct WlzServer {
     display: Display,
 }
 
+macro_rules! init {
+    ($place:expr, $value:expr) => {
+        unsafe { std::ptr::write($place as *mut _, $value) }
+    };
+}
+
 impl WlzServer {
     #[initialization]
-    pub fn init(mut self: Pin<&mut Self>) -> Result<(), Box<dyn Error>> {
+    pub fn init(mut self: Pin<&mut Self>) -> Result<(), WrapperError> {
         let this = self.as_mut().project();
         /* The Wayland display is managed by libwayland. It handles accepting
          * clients from the Unix socket, manging Wayland globals, and so on. */
-        *this.display = Display::try_create()?;
+        init!(this.display, Display::try_create()?);
 
         /* The backend is a wlroots feature which abstracts the underlying input and
          * output hardware. The autocreate option will choose the most suitable
          * backend based on the current environment, such as opening an X11 window
          * if an X11 server is running. */
-        *this.backend = Backend::autocreate(this.display.get_event_loop())?;
+        init!(
+            this.backend,
+            Backend::autocreate(this.display.get_event_loop())?
+        );
 
         /* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
          * can also specify a renderer using the WLR_RENDERER env var.
          * The renderer is responsible for defining the various pixel formats it
          * supports for shared memory, this configures that for clients. */
-        *this.renderer = Renderer::autocreate(this.backend)?;
+        init!(this.renderer, Renderer::autocreate(this.backend)?);
 
         this.renderer.init_wl_display(this.display)?;
 
@@ -116,7 +140,10 @@ impl WlzServer {
          * The allocator is the bridge between the renderer and the backend. It
          * handles the buffer creation, allowing wlroots to render onto the
          * screen */
-        *this.allocator = Allocator::autocreate(this.backend, this.renderer)?;
+        init!(
+            this.allocator,
+            Allocator::autocreate(this.backend, this.renderer)?
+        );
 
         /* This creates some hands-off wlroots interfaces. The compositor is
          * necessary for clients to allocate surfaces, the subcompositor allows to
@@ -131,7 +158,7 @@ impl WlzServer {
 
         /* Creates an output layout, which a wlroots utility for working with an
          * arrangement of screens in a physical layout. */
-        *this.output_layout = OutputLayout::create(this.display)?;
+        init!(this.output_layout, OutputLayout::create(this.display)?);
 
         /* Configure a listener to be notified when new outputs are available on the
          * backend. */
@@ -145,15 +172,18 @@ impl WlzServer {
          * positions and then call wlr_scene_output_commit() to render a frame if
          * necessary.
          */
-        *this.scene = Scene::create()?;
-        *this.scene_layout = this.scene.attach_output_layout(this.output_layout)?;
+        init!(this.scene, Scene::create()?);
+        init!(
+            this.scene_layout,
+            this.scene.attach_output_layout(this.output_layout)?
+        );
 
         /* Set up xdg-shell version 3. The xdg-shell is a Wayland protocol which is
          * used for application windows. For more detail on shells, refer to
          * https://drewdevault.com/2018/07/29/Wayland-shells.html.
          */
         this.toplevels.init();
-        *this.xdg_shell = XdgShell::create(this.display, 3)?;
+        init!(this.xdg_shell, XdgShell::create(this.display, 3)?);
 
         this.xdg_shell
             .new_toplevel_event()
@@ -164,14 +194,14 @@ impl WlzServer {
          * Creates a cursor, which is a wlroots utility for tracking the cursor
          * image shown on screen.
          */
-        *this.cursor = Cursor::create()?;
+        init!(this.cursor, Cursor::create()?);
         this.cursor.attach_output_layout(this.output_layout);
 
         /* Creates an xcursor manager, another wlroots utility which loads up
          * Xcursor themes to source cursor images from and makes sure that cursor
          * images are available at all scale factors on the screen (necessary for
          * HiDPI support). */
-        *this.cursor_mgr = XCursorManager::create(None, 24)?;
+        init!(this.cursor_mgr, XCursorManager::create(None, 24)?);
 
         /*
          * wlr_cursor *only* displays an image on screen. It does not move around
@@ -183,12 +213,30 @@ impl WlzServer {
          *
          * And more comments are sprinkled throughout the notify functions above.
          */
-        *this.cursor_mode = WlzCursorMode::Passthough;
+        init!(this.cursor_mode, WlzCursorMode::Passthough);
         this.cursor.motion_event().add(this.cursor_motion);
-        this.cursor.motion_absolute_event().add(this.cursor_motion_absolute);
+        this.cursor
+            .motion_absolute_event()
+            .add(this.cursor_motion_absolute);
         this.cursor.button_event().add(this.cursor_button);
         this.cursor.axis_event().add(this.cursor_axis);
         this.cursor.frame_event().add(this.cursor_frame);
+
+        /*
+         * Configures a seat, which is a single "seat" at which a user sits and
+         * operates the computer. This conceptually includes up to one keyboard,
+         * pointer, touch, and drawing tablet device. We also rig up a listener to
+         * let us know when new input devices are available on the backend.
+         */
+        this.keyboards.init();
+        this.backend.new_input_event().add(this.new_input);
+        init!(this.seat, Seat::create(this.display, "seat0")?);
+        this.seat
+            .request_set_cursor_event()
+            .add(this.request_cursor);
+        this.seat
+            .request_set_selection_event()
+            .add(this.request_set_selection);
 
         Ok(())
     }
@@ -322,6 +370,30 @@ impl WlzServer {
 
     fn cursor_frame(self: Pin<&mut Self>) {
         todo!()
+    }
+
+    fn new_input(self: Pin<&mut Self>, input_dev: Pin<&mut InputDevice>) {
+        todo!()
+    }
+
+    fn request_cursor(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    fn request_set_selection(self: Pin<&mut Self>) {
+        todo!()
+    }
+
+    pub fn add_socket_auto<'a>(self: Pin<&mut Self>) -> Result<&'a str, WrapperError> {
+        self.project().display.add_socket_auto()
+    }
+
+    pub fn start_backend(self: Pin<&mut Self>) -> Result<(), WrapperError> {
+        self.project().backend.start()
+    }
+
+    pub fn run(self: Pin<&mut Self>) {
+        self.project().display.run();
     }
 }
 

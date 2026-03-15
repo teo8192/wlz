@@ -32,7 +32,7 @@ impl Display {
         unsafe { ffi::wl_display_terminate(self.as_ptr()) };
     }
 
-    pub fn add_socket_auto(&mut self) -> Result<&str, Box<dyn Error>> {
+    pub fn add_socket_auto<'a>(&mut self) -> Result<&'a str, WrapperError> {
         let socket = unsafe { ffi::wl_display_add_socket_auto(self.as_ptr()) };
 
         if socket.is_null() {
