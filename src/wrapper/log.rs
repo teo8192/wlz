@@ -30,11 +30,23 @@ pub fn init(level: LogLevel) {
 }
 
 #[macro_export]
+macro_rules! log_string {
+    ($($arg:tt)*) => {
+        format!(
+            "[{}:{}] {}",
+            file!(),
+            line!(),
+            format_args!($($arg)*)
+        )
+    };
+}
+
+#[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {{
         $crate::wrapper::log::log_with_level(
             $crate::wrapper::log::LogLevel::Error,
-            &format!($($arg)*),
+            &$crate::log_string!($($arg)*),
         );
     }};
 }
@@ -44,7 +56,7 @@ macro_rules! info {
     ($($arg:tt)*) => {{
         $crate::wrapper::log::log_with_level(
             $crate::wrapper::log::LogLevel::Info,
-            &format!($($arg)*),
+            &$crate::log_string!($($arg)*),
         );
     }};
 }
@@ -54,7 +66,7 @@ macro_rules! debug {
     ($($arg:tt)*) => {{
         $crate::wrapper::log::log_with_level(
             $crate::wrapper::log::LogLevel::Debug,
-            &format!($($arg)*),
+            &$crate::log_string!($($arg)*),
         );
     }};
 }
